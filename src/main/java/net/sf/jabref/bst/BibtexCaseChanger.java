@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -15,250 +15,306 @@
 */
 package net.sf.jabref.bst;
 
+import java.util.Optional;
 
-public class BibtexCaseChanger {
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
-	String s;
+public final class BibtexCaseChanger {
 
-	char format;
+    private static final Log LOGGER = LogFactory.getLog(BibtexCaseChanger.class);
 
-	boolean prevColon = true;
+    // stores whether the char before the current char was a colon
+    private boolean prevColon = true;
 
-	int n;
-	
-	Warn warn;
+    // global variable to store the current brace level
+    private int braceLevel;
 
-	BibtexCaseChanger(String s, char format, Warn warn) {
-		this.s = s;
-		this.format = format;
-		this.n = s.length();
-		this.warn = warn;
-	}
+    public enum FORMAT_MODE {
+        // First character and character after a ":" as upper case - everything else in lower case. Obey {}.
+        TITLE_LOWERS('t'),
 
-	public static String changeCase(String s, char format, Warn warn) {
-		return (new BibtexCaseChanger(s, format, warn)).changeCase();
-	}
+        // All characters lower case - Obey {}
+        ALL_LOWERS('l'),
 
-	private String changeCase() {
-		char[] c = s.toCharArray();
+        // all characters upper case - Obey {}
+        ALL_UPPERS('u');
 
-		StringBuffer sb = new StringBuffer();
+        // the following would have to be done if the functionality of CaseChangers would be included here
+        // However, we decided against it and will probably do the other way round: https://github.com/JabRef/jabref/pull/215#issuecomment-146981624
 
-		int i = 0;
+        // Each word should start with a capital letter
+        //EACH_FIRST_UPPERS('f'),
 
-		while (i < n) {
-			if (c[i] == '{') {
-				braceLevel++;
-				if (braceLevel != 1 || i + 4 > n || c[i + 1] != '\\') {
-					prevColon = false;
-					sb.append(c[i]);
-					i++;
-					continue;
-				}
-				if (format == 't' && (i == 0 || (prevColon && Character.isWhitespace(c[i - 1])))) {
-					sb.append(c[i]);
-					i++;
-					prevColon = false;
-					continue;
-				}
-				i = convertSpecialChar(sb, c, i, format);
-				continue;
-			} 
-			if (c[i] == '}') {
-				sb.append(c[i]);
-				i++;
-				braceLevel = decrBraceLevel(s, braceLevel);
-				prevColon = false;
-				continue;
-			} 
-			if (braceLevel == 0) {
-				i = convertChar0(c, i, sb, format);
-				continue;
-			} 
-			sb.append(c[i]);
-			i++;
-		}
-		checkBrace(s, braceLevel);
-		return sb.toString();
-	}
+        // Converts all words to upper case, but converts articles, prepositions, and conjunctions to lower case
+        // Capitalizes first and last word
+        // Does not change words starting with "{"
+        // DIFFERENCE to old CaseChangers.TITLE: last word is NOT capitalized in all cases
+        //TITLE_UPPERS('T');
 
-	int braceLevel = 0;
+        private final char asChar;
 
-	int decrBraceLevel(String string, int braceLevel) {
-		if (braceLevel == 0) {
-			complain(string);
-		} else {
-			braceLevel--;
-		}
-		return braceLevel;
-	}
+        FORMAT_MODE(char asChar) {
+            this.asChar = asChar;
+        }
 
-	static void complain(String s) {
-		System.out.println("Warning -- String is not brace-balanced: " + s);
-	}
+        public char asChar() {
+            return asChar;
+        }
 
-	static void checkBrace(String s, int braceLevel) {
-		if (braceLevel > 0) {
-			complain(s);
-		}
-	}
 
-	/**
-	 * We're dealing with a special character (usually either an undotted `\i'
-	 * or `\j', or an accent like one in Table~3.1 of the \LaTeX\ manual, or a
-	 * foreign character like one in Table~3.2) if the first character after the
-	 * |left_brace| is a |backslash|; the special character ends with the
-	 * matching |right_brace|. How we handle what's in between depends on the
-	 * special character. In general, this code will do reasonably well if there
-	 * is other stuff, too, between braces, but it doesn't try to do anything
-	 * special with |colon|s.
-	 * 
-	 * @param c
-	 * @param i
-	 * @param format
-	 * @return
-	 */
-	public int convertSpecialChar(StringBuffer sb, char[] c, int i, char format) {
+        /**
+         * Convert bstFormat char into ENUM
+         *
+         * @throws IllegalArgumentException if char is not 't', 'l', 'u'
+         */
+        public static FORMAT_MODE getFormatModeForBSTFormat(final char bstFormat) {
+            for (FORMAT_MODE mode : FORMAT_MODE.values()) {
+                if (mode.asChar == bstFormat) {
+                    return mode;
+                }
+            }
+            throw new IllegalArgumentException();
+        }
+    }
 
-		sb.append(c[i]); i++; // skip over open brace
+    private BibtexCaseChanger() {
+    }
 
-		while (i < c.length && braceLevel > 0) {
-			sb.append(c[i]); i++;
-			// skip over the |backslash|
+    /**
+     * Changes case of the given string s
+     *
+     * @param s the string to handle
+     * @param format the format
+     * @return
+     */
+    public static String changeCase(String s, FORMAT_MODE format) {
+        return (new BibtexCaseChanger()).doChangeCase(s, format);
+    }
 
-			String s = findSpecialChar(c, i);
-			if (s != null) {
-				i = convertAccented(c, i, s, sb, format);
-			}
+    private String doChangeCase(String s, FORMAT_MODE format) {
+        char[] c = s.toCharArray();
 
-			while (i < c.length && braceLevel > 0 && c[i] != '\\') {
-				if (c[i] == '}')
-					braceLevel--;
-				else if (c[i] == '{') {
-					braceLevel++;
-				}
-				i = convertNonControl(c, i, sb, format);
-			}
-		}
-		return i;
-	}
+        StringBuilder sb = new StringBuilder();
 
-	/**
-	 * Convert the given string according to the format character (title, lower,
-	 * up) and append the result to the stringBuffer, return the updated
-	 * position.
-	 * 
-	 * @param c
-	 * @param pos
-	 * @param s
-	 * @param sb
-	 * @param format
-	 * @return
-	 */
-	int convertAccented(char[] c, int pos, String s, StringBuffer sb, char format) {
-		pos += s.length();
+        int i = 0;
+        int n = s.length();
 
-		switch (format) {
-		case TITLE_LOWERS:
-		case ALL_LOWERS:
-			if ("L O OE AE AA".contains(s))
-				sb.append(s.toLowerCase());
-			else
-				sb.append(s);
-			break;
-		case ALL_UPPERS:
-			if ("l o oe ae aa".contains(s))
-				sb.append(s.toUpperCase());
-			else if ("i j ss".contains(s)) {
+        while (i < n) {
+            if (c[i] == '{') {
+                braceLevel++;
+                if ((braceLevel != 1) || ((i + 4) > n) || (c[i + 1] != '\\')) {
+                    prevColon = false;
+                    sb.append(c[i]);
+                    i++;
+                    continue;
+                }
+                if ((format == FORMAT_MODE.TITLE_LOWERS) && ((i == 0) || (prevColon && Character.isWhitespace(c[i - 1])))) {
+                    sb.append('{');
+                    i++;
+                    prevColon = false;
+                    continue;
+                }
+                i = convertSpecialChar(sb, c, i, format);
+                continue;
+            }
+            if (c[i] == '}') {
+                sb.append(c[i]);
+                i++;
+                if (braceLevel == 0) {
+                    LOGGER.warn("Too many closing braces in string: " + s);
+                } else {
+                    braceLevel--;
+                }
+                prevColon = false;
+                continue;
+            }
+            if (braceLevel == 0) {
+                i = convertCharIfBraceLevelIsZero(c, i, sb, format);
+                continue;
+            }
+            sb.append(c[i]);
+            i++;
+        }
+        if (braceLevel > 0) {
+            LOGGER.warn("No enough closing braces in string: " + s);
+        }
+        return sb.toString();
+    }
 
-				sb.deleteCharAt(sb.length() - 1); // Kill backslash
-				sb.append(s.toUpperCase());
-				while (pos < c.length && Character.isWhitespace(c[pos])) {
-					pos++;
-				}
-			} else {
-				sb.append(s);
-			}
-			break;
-		}
-		return pos;
-	}
+    /**
+     * We're dealing with a special character (usually either an undotted `\i'
+     * or `\j', or an accent like one in Table~3.1 of the \LaTeX\ manual, or a
+     * foreign character like one in Table~3.2) if the first character after the
+     * |left_brace| is a |backslash|; the special character ends with the
+     * matching |right_brace|. How we handle what's in between depends on the
+     * special character. In general, this code will do reasonably well if there
+     * is other stuff, too, between braces, but it doesn't try to do anything
+     * special with |colon|s.
+     *
+     * @param c
+     * @param i the current position. It points to the opening brace
+     * @param format
+     * @return
+     */
+    private int convertSpecialChar(StringBuilder sb, char[] c, int start, FORMAT_MODE format) {
+        int i = start;
 
-	int convertNonControl(char[] c, int pos, StringBuffer sb, char format) {
-		switch (format) {
-		case TITLE_LOWERS:
-		case ALL_LOWERS:
-			sb.append(Character.toLowerCase(c[pos]));
-			pos++;
-			break;
-		case ALL_UPPERS:
-			sb.append(Character.toUpperCase(c[pos]));
-			pos++;
-			break;
-		}
-		return pos;
-	}
+        sb.append(c[i]);
+        i++; // skip over open brace
 
-	public final static char TITLE_LOWERS = 't';
+        while ((i < c.length) && (braceLevel > 0)) {
+            sb.append(c[i]);
+            i++;
+            // skip over the |backslash|
 
-	public final static char ALL_LOWERS = 'l';
+            Optional<String> s = BibtexCaseChanger.findSpecialChar(c, i);
+            if (s.isPresent()) {
+                i = convertAccented(c, i, s.get(), sb, format);
+            }
 
-	public final static char ALL_UPPERS = 'u';
+            while ((i < c.length) && (braceLevel > 0) && (c[i] != '\\')) {
+                if (c[i] == '}') {
+                    braceLevel--;
+                } else if (c[i] == '{') {
+                    braceLevel++;
+                }
+                i = convertNonControl(c, i, sb, format);
+            }
+        }
+        return i;
+    }
 
-	int convertChar0(char[] c, int i, StringBuffer sb, char format) {
-		switch (format) {
-		case TITLE_LOWERS:
-			if (i == 0) {
-				sb.append(c[i]);
-			} else if (prevColon && Character.isWhitespace(c[i - 1])) {
-				sb.append(c[i]);
-			} else {
-				sb.append(Character.toLowerCase(c[i]));
-			}
-			if (c[i] == ':')
-				prevColon = true;
-			else if (!Character.isWhitespace(c[i]))
-				prevColon = false;
-			break;
-		case ALL_LOWERS:
-			sb.append(Character.toLowerCase(c[i]));
-			break;
-		case ALL_UPPERS:
-			sb.append(Character.toUpperCase(c[i]));
-		}
-		i++;
-		return i;
-	}
+    /**
+     * Convert the given string according to the format character (title, lower,
+     * up) and append the result to the stringBuffer, return the updated
+     * position.
+     *
+     * @param c
+     * @param start
+     * @param s
+     * @param sb
+     * @param format
+     * @return the new position
+     */
+    private int convertAccented(char[] c, int start, String s, StringBuilder sb, FORMAT_MODE format) {
+        int pos = start;
+        pos += s.length();
 
-	static String findSpecialChar(char[] c, int pos) {
-		if (pos + 1 < c.length) {
-			if (c[pos] == 'o' && c[pos + 1] == 'e')
-				return "oe";
-			if (c[pos] == 'O' && c[pos + 1] == 'E')
-				return "OE";
-			if (c[pos] == 'a' && c[pos + 1] == 'e')
-				return "ae";
-			if (c[pos] == 'A' && c[pos + 1] == 'E')
-				return "AE";
-			if (c[pos] == 's' && c[pos + 1] == 's')
-				return "ss";
-			if (c[pos] == 'A' && c[pos + 1] == 'A')
-				return "AA";
-			if (c[pos] == 'a' && c[pos + 1] == 'a')
-				return "aa";
-		}
-		if (c[pos] == 'i')
-			return String.valueOf(c[pos]);
-		if (c[pos] == 'j')
-			return String.valueOf(c[pos]);
-		if (c[pos] == 'o')
-			return String.valueOf(c[pos]);
-		if (c[pos] == 'O')
-			return String.valueOf(c[pos]);
-		if (c[pos] == 'l')
-			return String.valueOf(c[pos]);
-		if (c[pos] == 'L')
-			return String.valueOf(c[pos]);
-		return null;
-	}
+        switch (format) {
+        case TITLE_LOWERS:
+        case ALL_LOWERS:
+            if ("L O OE AE AA".contains(s)) {
+                sb.append(s.toLowerCase());
+            } else {
+                sb.append(s);
+            }
+            break;
+        case ALL_UPPERS:
+            if ("l o oe ae aa".contains(s)) {
+                sb.append(s.toUpperCase());
+            } else if ("i j ss".contains(s)) {
+                sb.deleteCharAt(sb.length() - 1); // Kill backslash
+                sb.append(s.toUpperCase());
+                while ((pos < c.length) && Character.isWhitespace(c[pos])) {
+                    pos++;
+                }
+            } else {
+                sb.append(s);
+            }
+            break;
+        default:
+            LOGGER.info("convertAccented - Unknown format: " + format);
+            break;
+        }
+        return pos;
+    }
+
+    private int convertNonControl(char[] c, int start, StringBuilder sb, FORMAT_MODE format) {
+        int pos = start;
+        switch (format) {
+        case TITLE_LOWERS:
+        case ALL_LOWERS:
+            sb.append(Character.toLowerCase(c[pos]));
+            pos++;
+            break;
+        case ALL_UPPERS:
+            sb.append(Character.toUpperCase(c[pos]));
+            pos++;
+            break;
+        default:
+            LOGGER.info("convertNonControl - Unknown format: " + format);
+            break;
+        }
+        return pos;
+    }
+
+    private int convertCharIfBraceLevelIsZero(char[] c, int start, StringBuilder sb, FORMAT_MODE format) {
+        int i = start;
+        switch (format) {
+        case TITLE_LOWERS:
+            if ((i == 0) || (prevColon && Character.isWhitespace(c[i - 1]))) {
+                sb.append(c[i]);
+            } else {
+                sb.append(Character.toLowerCase(c[i]));
+            }
+            if (c[i] == ':') {
+                prevColon = true;
+            } else if (!Character.isWhitespace(c[i])) {
+                prevColon = false;
+            }
+            break;
+        case ALL_LOWERS:
+            sb.append(Character.toLowerCase(c[i]));
+            break;
+        case ALL_UPPERS:
+            sb.append(Character.toUpperCase(c[i]));
+            break;
+        default:
+            LOGGER.info("convertCharIfBraceLevelIsZero - Unknown format: " + format);
+            break;
+        }
+        i++;
+        return i;
+    }
+
+    /**
+     * Determine whether there starts a special char at pos (e.g., oe, AE). Return it as string.
+     * If nothing found, return null
+     *
+     * Also used by BibtexPurify
+     *
+     * @param c the current "String"
+     * @param pos the position
+     * @return the special LaTeX character or null
+     */
+    public static Optional<String> findSpecialChar(char[] c, int pos) {
+        if ((pos + 1) < c.length) {
+            if ((c[pos] == 'o') && (c[pos + 1] == 'e')) {
+                return Optional.of("oe");
+            }
+            if ((c[pos] == 'O') && (c[pos + 1] == 'E')) {
+                return Optional.of("OE");
+            }
+            if ((c[pos] == 'a') && (c[pos + 1] == 'e')) {
+                return Optional.of("ae");
+            }
+            if ((c[pos] == 'A') && (c[pos + 1] == 'E')) {
+                return Optional.of("AE");
+            }
+            if ((c[pos] == 's') && (c[pos + 1] == 's')) {
+                return Optional.of("ss");
+            }
+            if ((c[pos] == 'A') && (c[pos + 1] == 'A')) {
+                return Optional.of("AA");
+            }
+            if ((c[pos] == 'a') && (c[pos + 1] == 'a')) {
+                return Optional.of("aa");
+            }
+        }
+        if ("ijoOlL".indexOf(c[pos]) >= 0) {
+            return Optional.of(String.valueOf(c[pos]));
+        }
+        return Optional.empty();
+    }
 }

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2012 JabRef contributors.
+/*  Copyright (C) 2012-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -12,52 +12,56 @@
     You should have received a copy of the GNU General Public License along
     with this program; if not, write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ */
 package net.sf.jabref.specialfields;
 
 import java.util.ArrayList;
+import java.util.List;
 
-import javax.swing.ImageIcon;
+import javax.swing.Icon;
 
-import net.sf.jabref.GUIGlobals;
-import net.sf.jabref.Globals;
+import net.sf.jabref.gui.IconTheme;
+import net.sf.jabref.logic.l10n.Localization;
 
 public class Quality extends SpecialField {
 
-	private static Quality INSTANCE;
+    private static Quality INSTANCE;
 
-	public Quality() {
-		ArrayList<SpecialFieldValue> values = new ArrayList<SpecialFieldValue>();
-    	values.add(new SpecialFieldValue(this, "qualityAssured", "toggleQualityAssured", Globals.lang("Toogle quality assured"), GUIGlobals.getImage("qualityAssured"), Globals.lang("Toogle quality assured")));
-		this.setValues(values);
-		TEXT_DONE_PATTERN = "Toggled quality for %0 entries";
-	}
-	
-	public String getFieldName() {
-		return SpecialFieldsUtils.FIELDNAME_QUALITY;
-	}
 
-	public static Quality getInstance() {
-		if (INSTANCE == null) {
-			INSTANCE = new Quality();
-		}
-		return INSTANCE;
-	}
-	
-	public ImageIcon getRepresentingIcon() {
-		return this.getValues().get(0).getIcon();
-	}
+    private Quality() {
+        List<SpecialFieldValue> values = new ArrayList<>();
+        // DO NOT TRANSLATE "qualityAssured" as this makes the produced .bib files non portable
+        values.add(new SpecialFieldValue(this, "qualityAssured", "toggleQualityAssured",
+                Localization.lang("Toggle quality assured"), IconTheme.JabRefIcon.QUALITY_ASSURED.getSmallIcon(),
+                Localization.lang("Toggle quality assured")));
+        this.setValues(values);
+    }
 
-	public String getToolTip() {
-		return this.getValues().get(0).getToolTipText();
-	}
+    @Override
+    public String getFieldName() {
+        return SpecialFieldsUtils.FIELDNAME_QUALITY;
+    }
 
-	public String getMenuString() {
-		return Globals.lang("Quality");
-	}
-	
-	public boolean isSingleValueField() {
-		return true;
-	}
+    @Override
+    public String getLocalizedFieldName() {
+        return Localization.lang("Quality");
+    }
+
+    public static Quality getInstance() {
+        if (Quality.INSTANCE == null) {
+            Quality.INSTANCE = new Quality();
+        }
+        return Quality.INSTANCE;
+    }
+
+    @Override
+    public Icon getRepresentingIcon() {
+        return IconTheme.JabRefIcon.QUALITY.getSmallIcon();
+    }
+
+    @Override
+    public boolean isSingleValueField() {
+        return true;
+    }
 
 }

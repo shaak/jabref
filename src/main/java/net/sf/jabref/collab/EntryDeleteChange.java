@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -12,51 +12,63 @@
     You should have received a copy of the GNU General Public License along
     with this program; if not, write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ */
 package net.sf.jabref.collab;
 
 import javax.swing.JComponent;
 import javax.swing.JScrollPane;
 
-import net.sf.jabref.*;
-import net.sf.jabref.undo.NamedCompound;
-import net.sf.jabref.undo.UndoableRemoveEntry;
+import net.sf.jabref.Globals;
+import net.sf.jabref.JabRefPreferences;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.PreviewPanel;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.gui.undo.UndoableRemoveEntry;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.model.DuplicateCheck;
+import net.sf.jabref.model.database.BibDatabase;
+import net.sf.jabref.model.entry.BibEntry;
 
-public class EntryDeleteChange extends Change {
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
-  BibtexEntry memEntry, tmpEntry, diskEntry;
-  boolean isModifiedLocally;
-  double matchWithTmp;
-  PreviewPanel pp;
-  JScrollPane sp;
+class EntryDeleteChange extends Change {
 
-  public EntryDeleteChange(BibtexEntry memEntry, BibtexEntry tmpEntry) {
-    super("Deleted entry");
-    this.memEntry = memEntry;
-    this.tmpEntry = tmpEntry;
+    private final BibEntry memEntry;
+    private final BibEntry tmpEntry;
+    private final JScrollPane sp;
 
-    // Compare the deleted entry in memory with the one in the tmpfile. The
-    // entry could have been removed in memory.
-    matchWithTmp = DuplicateCheck.compareEntriesStrictly(memEntry, tmpEntry);
+    private static final Log LOGGER = LogFactory.getLog(EntryDeleteChange.class);
 
-    // Check if it has been modified locally, since last tempfile was saved.
-    isModifiedLocally = !(matchWithTmp > 1);
 
-    //Util.pr("Modified entry: "+memEntry.getCiteKey()+"\n Modified locally: "+isModifiedLocally
-    //        +" Modifications agree: "+modificationsAgree);
+    public EntryDeleteChange(BibEntry memEntry, BibEntry tmpEntry) {
+        super(Localization.lang("Deleted entry"));
+        this.memEntry = memEntry;
+        this.tmpEntry = tmpEntry;
 
-    pp = new PreviewPanel(null, memEntry, null, new MetaData(), Globals.prefs.get("preview0"));
-    sp = new JScrollPane(pp);
-  }
+        // Compare the deleted entry in memory with the one in the tmpfile. The
+        // entry could have been removed in memory.
+        double matchWithTmp = DuplicateCheck.compareEntriesStrictly(memEntry, tmpEntry);
 
-  public boolean makeChange(BasePanel panel, BibtexDatabase secondary, NamedCompound undoEdit) {
-    panel.database().removeEntry(memEntry.getId());
-    undoEdit.addEdit(new UndoableRemoveEntry(panel.database(), memEntry, panel));
-    secondary.removeEntry(tmpEntry.getId());
-    return true;
-  }
+        // Check if it has been modified locally, since last tempfile was saved.
+        boolean isModifiedLocally = (matchWithTmp <= 1);
 
-  JComponent description() {
-    return sp;
-  }
+        LOGGER.debug("Modified entry: " + memEntry.getCiteKey() + "\n Modified locally: " + isModifiedLocally);
+
+        PreviewPanel pp = new PreviewPanel(null, memEntry, null, Globals.prefs.get(JabRefPreferences.PREVIEW_0));
+        sp = new JScrollPane(pp);
+    }
+
+    @Override
+    public boolean makeChange(BasePanel panel, BibDatabase secondary, NamedCompound undoEdit) {
+        panel.getDatabase().removeEntry(memEntry);
+        undoEdit.addEdit(new UndoableRemoveEntry(panel.getDatabase(), memEntry, panel));
+        secondary.removeEntry(tmpEntry);
+        return true;
+    }
+
+    @Override
+    public JComponent description() {
+        return sp;
+    }
 }

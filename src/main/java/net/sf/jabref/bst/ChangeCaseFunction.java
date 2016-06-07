@@ -17,14 +17,13 @@ package net.sf.jabref.bst;
 
 import java.util.Stack;
 
+import net.sf.jabref.bst.BibtexCaseChanger.FORMAT_MODE;
 import net.sf.jabref.bst.VM.BstEntry;
 import net.sf.jabref.bst.VM.BstFunction;
 
-
-
 /**
  * From the Bibtex manual:
- * 
+ *
  * Pops the top two (string) literals; it changes the case of the second
  * according to the specifications of the first, as follows. (Note: The word
  * `letters' in the next sentence refers only to those at brace-level 0, the
@@ -42,39 +41,41 @@ import net.sf.jabref.bst.VM.BstFunction;
  * note: It ignores case differences in the specification string; for example,
  * the strings t and T are equivalent for the purposes of this built-in
  * function.)
- * 
+ *
  * Christopher: I think this should be another grammar! This parser is horrible.
- * 
+ *
  */
 public class ChangeCaseFunction implements BstFunction {
 
-	VM vm;
+    private final VM vm;
 
-	public ChangeCaseFunction(VM vm) {
-		this.vm = vm;
-	}
 
-	public void execute(BstEntry context) {
-		Stack<Object> stack = vm.getStack();
+    public ChangeCaseFunction(VM vm) {
+        this.vm = vm;
+    }
 
-		if (stack.size() < 2) {
-			throw new VMException("Not enough operands on stack for operation change.case$");
-		}
-		Object o1 = stack.pop();
-		Object o2 = stack.pop();
+    @Override
+    public void execute(BstEntry context) {
+        Stack<Object> stack = vm.getStack();
 
-		if (!(o1 instanceof String && ((String) o1).length() == 1)) {
-			throw new VMException("A format string of length 1 is needed for change.case$");
-		}
+        if (stack.size() < 2) {
+            throw new VMException("Not enough operands on stack for operation change.case$");
+        }
 
-		if (!(o2 instanceof String)) {
-			throw new VMException("A string is needed as second parameter for change.case$");
-		}
+        Object o1 = stack.pop();
+        if (!((o1 instanceof String) && (((String) o1).length() == 1))) {
+            throw new VMException("A format string of length 1 is needed for change.case$");
+        }
 
-		char format = (((String) o1).toLowerCase().charAt(0));
-		String s = (String) o2;
+        Object o2 = stack.pop();
+        if (!(o2 instanceof String)) {
+            throw new VMException("A string is needed as second parameter for change.case$");
+        }
 
-		stack.push(BibtexCaseChanger.changeCase(s, format, vm));
-	}
+        char format = ((String) o1).toLowerCase().charAt(0);
+        String s = (String) o2;
+
+        stack.push(BibtexCaseChanger.changeCase(s, FORMAT_MODE.getFormatModeForBSTFormat(format)));
+    }
 
 }

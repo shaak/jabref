@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -19,260 +19,278 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.ArrayList;
 
-import javax.swing.*;
+import javax.swing.AbstractAction;
+import javax.swing.ActionMap;
+import javax.swing.BorderFactory;
+import javax.swing.InputMap;
+import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 
-import net.sf.jabref.*;
-import net.sf.jabref.gui.FileListTableModel;
+import net.sf.jabref.Globals;
+import net.sf.jabref.gui.BasePanel;
 import net.sf.jabref.gui.FileListEntry;
-import net.sf.jabref.util.XMPUtil;
+import net.sf.jabref.gui.FileListTableModel;
+import net.sf.jabref.gui.keyboard.KeyBinding;
+import net.sf.jabref.gui.util.FocusRequester;
+import net.sf.jabref.gui.worker.AbstractWorker;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.logic.util.io.FileUtil;
+import net.sf.jabref.logic.xmp.XMPUtil;
+import net.sf.jabref.model.database.BibDatabase;
+import net.sf.jabref.model.entry.BibEntry;
 
 import com.jgoodies.forms.builder.ButtonBarBuilder;
 
 /**
- * 
+ *
  * This action goes through all selected entries in the BasePanel, and attempts
  * to write the XMP data to the external pdf.
- * 
- * @author $Author$
- * @version $Revision$ ($Date$)
- * 
  */
 public class WriteXMPAction extends AbstractWorker {
 
-	BasePanel panel;
+    private final BasePanel panel;
 
-	BibtexEntry[] entries;
-	
-	BibtexDatabase database;
+    private Collection<BibEntry> entries;
 
-	OptionsDialog optDiag;
+    private BibDatabase database;
 
-	boolean goOn = true;
+    private OptionsDialog optDiag;
 
-	int skipped, entriesChanged, errors;
+    private boolean goOn = true;
 
-	public WriteXMPAction(BasePanel panel) {
-		this.panel = panel;
-	}
+    private int skipped;
+    private int entriesChanged;
+    private int errors;
 
-	public void init() {
 
-		database = panel.getDatabase();
-		// Get entries and check if it makes sense to perform this operation
-		entries = panel.getSelectedEntries();
+    public WriteXMPAction(BasePanel panel) {
+        this.panel = panel;
+    }
 
-		if (entries.length == 0) {
+    @Override
+    public void init() {
 
-            Collection<BibtexEntry> var = database.getEntries();
-            entries = var.toArray(new BibtexEntry[var.size()]);
+        database = panel.getDatabase();
+        // Get entries and check if it makes sense to perform this operation
+        entries = panel.getSelectedEntries();
 
-			if (entries.length == 0) {
+        if (entries.isEmpty()) {
 
-				JOptionPane.showMessageDialog(panel, Globals.lang("This operation requires at least one entry."),
-                                        Globals.lang("Write XMP-metadata"), JOptionPane.ERROR_MESSAGE);
-				goOn = false;
-				return;
+            entries = database.getEntries();
 
-			} else {
+            if (entries.isEmpty()) {
 
-				int response = JOptionPane.showConfirmDialog(panel, Globals.lang("Write XMP-metadata for all PDFs in current database?"),
-                                        Globals.lang("Write XMP-metadata"), JOptionPane.YES_NO_CANCEL_OPTION,
-					JOptionPane.QUESTION_MESSAGE);
+                JOptionPane.showMessageDialog(panel, Localization.lang("This operation requires at least one entry."),
+                        Localization.lang("Write XMP-metadata"), JOptionPane.ERROR_MESSAGE);
+                goOn = false;
+                return;
 
-				if (response != JOptionPane.YES_OPTION) {
-					goOn = false;
-					return;
-				}
-			}
-		}
+            } else {
 
-		errors = entriesChanged = skipped = 0;
+                int response = JOptionPane.showConfirmDialog(panel, Localization.lang("Write XMP-metadata for all PDFs in current database?"),
+                        Localization.lang("Write XMP-metadata"), JOptionPane.YES_NO_CANCEL_OPTION,
+                        JOptionPane.QUESTION_MESSAGE);
 
-		if (optDiag == null) {
-			optDiag = new OptionsDialog(panel.frame());
-		}
-		optDiag.open();
+                if (response != JOptionPane.YES_OPTION) {
+                    goOn = false;
+                    return;
+                }
+            }
+        }
 
-		panel.output(Globals.lang("Writing XMP metadata..."));
-	}
+        errors = entriesChanged = skipped = 0;
 
-	public void run() {
+        if (optDiag == null) {
+            optDiag = new OptionsDialog(panel.frame());
+        }
+        optDiag.open();
 
-		if (!goOn)
-			return;
+        panel.output(Localization.lang("Writing XMP-metadata..."));
+    }
 
-        for (BibtexEntry entry : entries) {
+    @Override
+    public void run() {
+
+        if (!goOn) {
+            return;
+        }
+
+        for (BibEntry entry : entries) {
 
             // Make a list of all PDFs linked from this entry:
-            List<File> files = new ArrayList<File>();
+            List<File> files = new ArrayList<>();
 
             // First check the (legacy) "pdf" field:
             String pdf = entry.getField("pdf");
-            String[] dirs = panel.metaData().getFileDirectory("pdf");
-            File f = Util.expandFilename(pdf, dirs);
-            if (f != null)
-                files.add(f);
+            List<String> dirs = panel.getBibDatabaseContext().getFileDirectory("pdf");
+            FileUtil.expandFilename(pdf, dirs).ifPresent(files::add);
 
             // Then check the "file" field:
-            dirs = panel.metaData().getFileDirectory(GUIGlobals.FILE_FIELD);
-            String field = entry.getField(GUIGlobals.FILE_FIELD);
-            if (field != null) {
+            dirs = panel.getBibDatabaseContext().getFileDirectory();
+            if (entry.hasField(Globals.FILE_FIELD)) {
                 FileListTableModel tm = new FileListTableModel();
-                tm.setContent(field);
+                tm.setContent(entry.getField(Globals.FILE_FIELD));
                 for (int j = 0; j < tm.getRowCount(); j++) {
                     FileListEntry flEntry = tm.getEntry(j);
-                    if ((flEntry.getType() != null) && (flEntry.getType().getName().toLowerCase().equals("pdf"))) {
-                        f = Util.expandFilename(flEntry.getLink(), dirs);
-                        if (f != null)
-                            files.add(f);
+                    if ((flEntry.type.isPresent()) && "pdf".equalsIgnoreCase(flEntry.type.get().getName())) {
+                        FileUtil.expandFilename(flEntry.link, dirs).ifPresent(files::add);
                     }
                 }
             }
 
-            optDiag.progressArea.append(entry.getCiteKey() + "\n");
+            optDiag.getProgressArea().append(entry.getCiteKey() + "\n");
 
-            if (files.size() == 0) {
+            if (files.isEmpty()) {
                 skipped++;
-                optDiag.progressArea.append("  " + Globals.lang("Skipped - No PDF linked") + ".\n");
-            } else for (File file : files) {
-                if (!file.exists()) {
-                    skipped++;
-                    optDiag.progressArea.append("  " + Globals.lang("Skipped - PDF does not exist")
-                            + ":\n");
-                    optDiag.progressArea.append("    " + file.getPath() + "\n");
-
-
-                } else {
-                    try {
-                        XMPUtil.writeXMP(file, entry, database);
-                        optDiag.progressArea.append("  " + Globals.lang("Ok") + ".\n");
-                        entriesChanged++;
-                    } catch (Exception e) {
-                        optDiag.progressArea.append("  " + Globals.lang("Error while writing") + " '"
-                                + file.getPath() + "':\n");
-                        optDiag.progressArea.append("    " + e.getLocalizedMessage() + "\n");
-                        errors++;
+                optDiag.getProgressArea().append("  " + Localization.lang("Skipped - No PDF linked") + ".\n");
+            } else {
+                for (File file : files) {
+                    if (file.exists()) {
+                        try {
+                            XMPUtil.writeXMP(file, entry, database);
+                            optDiag.getProgressArea().append("  " + Localization.lang("OK") + ".\n");
+                            entriesChanged++;
+                        } catch (Exception e) {
+                            optDiag.getProgressArea().append(
+                                    "  " + Localization.lang("Error while writing") + " '" + file.getPath() + "':\n");
+                            optDiag.getProgressArea().append("    " + e.getLocalizedMessage() + "\n");
+                            errors++;
+                        }
+                    } else {
+                        skipped++;
+                        optDiag.getProgressArea()
+                                .append("  " + Localization.lang("Skipped - PDF does not exist") + ":\n");
+                        optDiag.getProgressArea().append("    " + file.getPath() + "\n");
                     }
                 }
             }
 
-            if (optDiag.canceled) {
-                optDiag.progressArea.append("\n"
-                        + Globals.lang("Operation canceled.\n"));
+            if (optDiag.isCanceled()) {
+                optDiag.getProgressArea().append("\n"
+                        + Localization.lang("Operation canceled.") +"\n");
                 break;
             }
         }
-		optDiag.progressArea.append("\n"
-			+ Globals.lang("Finished writing XMP for %0 file (%1 skipped, %2 errors).", String
-				.valueOf(entriesChanged), String.valueOf(skipped), String.valueOf(errors)));
-		optDiag.done();
-	}
+        optDiag.getProgressArea()
+                .append("\n"
+                + Localization.lang("Finished writing XMP for %0 file (%1 skipped, %2 errors).", String
+                .valueOf(entriesChanged), String.valueOf(skipped), String.valueOf(errors)));
+        optDiag.done();
+    }
 
-	public void update() {
-		if (!goOn)
-			return;
+    @Override
+    public void update() {
+        if (!goOn) {
+            return;
+        }
 
-		panel.output(Globals.lang("Finished writing XMP for %0 file (%1 skipped, %2 errors).",
-			String.valueOf(entriesChanged), String.valueOf(skipped), String.valueOf(errors)));
-	}
+        panel.output(Localization.lang("Finished writing XMP for %0 file (%1 skipped, %2 errors).",
+                String.valueOf(entriesChanged), String.valueOf(skipped), String.valueOf(errors)));
+    }
 
-	class OptionsDialog extends JDialog {
 
-		private static final long serialVersionUID = 7459164400811785958L;
+    class OptionsDialog extends JDialog {
 
-		JButton okButton = new JButton(Globals.lang("Ok")), cancelButton = new JButton(
-                        Globals.lang("Cancel"));
+        private final JButton okButton = new JButton(Localization.lang("OK"));
+        private final JButton cancelButton = new JButton(Localization.lang("Cancel"));
 
-		boolean canceled;
+        private boolean canceled;
 
-		JTextArea progressArea;
+        private final JTextArea progressArea;
 
-		public OptionsDialog(JFrame parent) {
-			super(parent, Globals.lang("Writing XMP metadata for selected entries..."), false);
-			okButton.setEnabled(false);
 
-			okButton.addActionListener(new ActionListener() {
-				public void actionPerformed(ActionEvent e) {
-					dispose();
-				}
-			});
+        public OptionsDialog(JFrame parent) {
+            super(parent, Localization.lang("Writing XMP-metadata for selected entries..."), false);
+            okButton.setEnabled(false);
 
-			AbstractAction cancel = new AbstractAction() {
-				private static final long serialVersionUID = -338601477652815366L;
+            okButton.addActionListener(e -> dispose());
 
-				public void actionPerformed(ActionEvent e) {
-					canceled = true;
-				}
-			};
-			cancelButton.addActionListener(cancel);
+            AbstractAction cancel = new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    canceled = true;
+                }
+            };
+            cancelButton.addActionListener(cancel);
 
-			InputMap im = cancelButton.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-			ActionMap am = cancelButton.getActionMap();
-			im.put(Globals.prefs.getKey("Close dialog"), "close");
-			am.put("close", cancel);
+            InputMap im = cancelButton.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+            ActionMap am = cancelButton.getActionMap();
+            im.put(Globals.getKeyPrefs().getKey(KeyBinding.CLOSE_DIALOG), "close");
+            am.put("close", cancel);
 
-			progressArea = new JTextArea(15, 60);
+            progressArea = new JTextArea(15, 60);
 
-			JScrollPane scrollPane = new JScrollPane(progressArea,
-				JScrollPane.VERTICAL_SCROLLBAR_ALWAYS, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-			Dimension d = progressArea.getPreferredSize();
-			d.height += scrollPane.getHorizontalScrollBar().getHeight() + 15;
-			d.width += scrollPane.getVerticalScrollBar().getWidth() + 15;
-			
-			panel.setSize(d);
+            JScrollPane scrollPane = new JScrollPane(progressArea,
+                    JScrollPane.VERTICAL_SCROLLBAR_ALWAYS, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+            Dimension d = progressArea.getPreferredSize();
+            d.height += scrollPane.getHorizontalScrollBar().getHeight() + 15;
+            d.width += scrollPane.getVerticalScrollBar().getWidth() + 15;
 
-			progressArea.setBackground(Color.WHITE);
-			progressArea.setEditable(false);
-			progressArea.setBorder(BorderFactory.createEmptyBorder(3, 3, 3,
-				3));
-			progressArea.setText("");
+            panel.setSize(d);
 
-			JPanel panel = new JPanel();
-			panel.setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
-			panel.add(scrollPane);
+            progressArea.setBackground(Color.WHITE);
+            progressArea.setEditable(false);
+            progressArea.setBorder(BorderFactory.createEmptyBorder(3, 3, 3,
+                    3));
+            progressArea.setText("");
 
-			
+            JPanel tmpPanel = new JPanel();
+            tmpPanel.setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
+            tmpPanel.add(scrollPane);
 
-			// progressArea.setPreferredSize(new Dimension(300, 300));
+            // progressArea.setPreferredSize(new Dimension(300, 300));
 
-			ButtonBarBuilder bb = new ButtonBarBuilder();
-			bb.addGlue();
-			bb.addButton(okButton);
-			bb.addRelatedGap();
-			bb.addButton(cancelButton);
-			bb.addGlue();
-			JPanel bbPanel = bb.getPanel();
-			bbPanel.setBorder(BorderFactory.createEmptyBorder(0, 3, 3, 3));
-			getContentPane().add(panel, BorderLayout.CENTER);
-			getContentPane().add(bbPanel, BorderLayout.SOUTH);
+            ButtonBarBuilder bb = new ButtonBarBuilder();
+            bb.addGlue();
+            bb.addButton(okButton);
+            bb.addRelatedGap();
+            bb.addButton(cancelButton);
+            bb.addGlue();
+            JPanel bbPanel = bb.getPanel();
+            bbPanel.setBorder(BorderFactory.createEmptyBorder(0, 3, 3, 3));
+            getContentPane().add(tmpPanel, BorderLayout.CENTER);
+            getContentPane().add(bbPanel, BorderLayout.SOUTH);
 
-			pack();
-			this.setResizable(false);
+            pack();
+            this.setResizable(false);
 
-		}
+        }
 
-		public void done() {
-			okButton.setEnabled(true);
-			cancelButton.setEnabled(false);
-		}
+        public void done() {
+            okButton.setEnabled(true);
+            cancelButton.setEnabled(false);
+        }
 
-		public void open() {
-			progressArea.setText("");
-			canceled = false;
-			Util.placeDialog(optDiag, panel.frame());
+        public void open() {
+            progressArea.setText("");
+            canceled = false;
+            optDiag.setLocationRelativeTo(panel.frame());
 
-			okButton.setEnabled(false);
-			cancelButton.setEnabled(true);
+            okButton.setEnabled(false);
+            cancelButton.setEnabled(true);
 
-			new FocusRequester(okButton);
+            new FocusRequester(okButton);
 
-			optDiag.setVisible(true);
-		}
-	}
+            optDiag.setVisible(true);
+        }
+
+        public boolean isCanceled() {
+            return canceled;
+        }
+
+        public JTextArea getProgressArea() {
+            return progressArea;
+        }
+    }
 }

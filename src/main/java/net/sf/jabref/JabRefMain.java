@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2016 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -15,166 +15,96 @@
 */
 package net.sf.jabref;
 
-import java.awt.Component;
-import java.awt.Dimension;
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.net.Authenticator;
 
-import javax.swing.BorderFactory;
-import javax.swing.JEditorPane;
-import javax.swing.JOptionPane;
-import javax.swing.JScrollPane;
+import javax.swing.SwingUtilities;
+
+import net.sf.jabref.cli.ArgumentProcessor;
+import net.sf.jabref.exporter.ExportFormats;
+import net.sf.jabref.gui.remote.JabRefMessageHandler;
+import net.sf.jabref.logic.CustomEntryTypesManager;
+import net.sf.jabref.logic.journals.JournalAbbreviationLoader;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.logic.net.ProxyAuthenticator;
+import net.sf.jabref.logic.net.ProxyPreferences;
+import net.sf.jabref.logic.net.ProxyRegisterer;
+import net.sf.jabref.logic.remote.RemotePreferences;
+import net.sf.jabref.logic.remote.client.RemoteListenerClient;
+import net.sf.jabref.model.entry.InternalBibtexFields;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
- * This is a class compiled under Java 1.4.2 that will start the real JabRef and
- * print some warnings if no Java 1.5 and higher and no JRE from Sun
- * Microsystems is found.
- * 
- * Caution: We cannot use any other class from JabRef here (for instance no
- * calls to Globals.lang() are possible), since then it could not be run using
- * Java 1.4.
- * 
- * @author oezbek
- * 
+ * JabRef MainClass
  */
 public class JabRefMain {
-   
-    public static String exceptionToString(Throwable t){
-        StringWriter stackTraceWriter = new StringWriter();
-        t.printStackTrace(new PrintWriter(stackTraceWriter));
-        return stackTraceWriter.toString();
-    }
-    
-    /**
-     * @param args
-     *            We will pass these arguments to JabRef later.
-     */
+    private static final Log LOGGER = LogFactory.getLog(JabRefMain.class);
+
     public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> start(args));
+    }
 
-        String javaVersion = System.getProperty("java.version", null);
+    private static void start(String[] args) {
+        JabRefPreferences preferences = JabRefPreferences.getInstance();
 
-        if (javaVersion.compareTo("1.6") < 0) {
-            String javaVersionWarning = "\n" + 
-                "WARNING: You are running Java version 1.6 or lower (" + javaVersion + " to be exact).\n" +
-                "         JabRef needs at least a Java Runtime Environment 1.6 or higher.\n" +
-                "         JabRef should not start properly and output an error message\n" +
-                "         (probably java.lang.UnsupportedClassVersionError ... (Unsupported major.minor version 49.0)\n" +
-                "         See http://jabref.sf.net/faq.php for more information.\n";
-
-            System.out.println(javaVersionWarning);
+        ProxyPreferences proxyPreferences = ProxyPreferences.loadFromPreferences(preferences);
+        ProxyRegisterer.register(proxyPreferences);
+        if (proxyPreferences.isUseProxy() && proxyPreferences.isUseAuthentication()) {
+            Authenticator.setDefault(new ProxyAuthenticator());
         }
 
-        String javaVendor = System.getProperty("java.vendor", null);
-        if ((!javaVendor.contains("Sun Microsystems")) && (!javaVendor.contains("Oracle"))) {
-            System.out.println("\n" + 
-                    "WARNING: You are not running a Java version from Oracle (or Sun Microsystems).\n" +
-                    "         Your java vendor is: " + javaVendor + "\n" +
-                    "         If JabRef crashes please consider switching to an Oracle Java Runtime.\n" +
-                    "         See http://jabref.sf.net/faq.php for more information.\n");
-        }
+        Globals.startBackgroundTasks();
+        Globals.prefs = preferences;
+        Localization.setLanguage(preferences.get(JabRefPreferences.LANGUAGE));
+        Globals.prefs.setLanguageDependentDefaultValues();
 
-        try {
-            // We need to load this class dynamically, or otherwise the Java 
-            // runtime would crash while loading JabRefMain itself.
-            Method method = Class.forName("net.sf.jabref.JabRef").getMethod(
-                "main", new Class[] { args.getClass() });
-            method.invoke(null, new Object[] { args });
+        // Update which fields should be treated as numeric, based on preferences:
+        InternalBibtexFields.setNumericFieldsFromPrefs();
 
-        } catch (InvocationTargetException e) {
-            
-            String errorMessage = 
-                "\nERROR while starting or running JabRef:\n\n" + 
-                exceptionToString(e.getCause()) + "\n" + 
-                "Please first check if this problem and a solution is already known. Find our...\n" +
-                "  * ...FAQ at http://jabref.sf.net/faq.php and our...\n" +
-                "  * ...user mailing-list at http://sf.net/mailarchive/forum.php?forum_name=jabref-users\n\n" + 
-                "If you do not find a solution there, please let us know about the problem by writing a bug report.\n" +
-                "You can find our bug tracker at http://sourceforge.net/p/jabref/bugs/\n\n" +
-                "  * If the bug has already been reported there, please add your comments to the existing bug.\n" +
-                "  * If the bug has not been reported yet, then we need the complete error message given above\n" +
-                "    and a description of what you did before the error occured.\n\n" +
-                "We also need the following information (you can copy and paste all this):\n" +
-                "  * Java Version: " + javaVersion + "\n" + 
-                "  * Java Vendor: " + javaVendor + "\n" + 
-                "  * Operating System: " + System.getProperty("os.name") + " (" + System.getProperty("os.version") + ")\n" +
-                "  * Hardware Architecture: " + System.getProperty("os.arch") + "\n\n" +
-        		"We are sorry for the trouble and thanks for reporting problems with JabRef!\n";
-            
-            System.out.println(errorMessage);
-            
-            JEditorPane pane = new JEditorPane("text/html", 
-                "<html>The following error occurred while running JabRef:<p><font color=\"red\">" +
-                exceptionToString(e.getCause()).replaceAll("\\n", "<br>") + 
-                "</font></p>" + 
-                "<p>Please first check if this problem and a solution is already known. Find our...</p>" +
-                "<ul><li>...FAQ at <b>http://jabref.sf.net/faq.php</b> and our..." +
-                "<li>...user mailing-list at <b>http://sf.net/mailarchive/forum.php?forum_name=jabref-users</b></ul>" + 
-                "If you do not find a solution there, please let us know about the problem by writing a bug report.<br>" +
-                "You can find our bug tracker at <a href=\"http://sourceforge.net/p/jabref/bugs/\"><b>http://sourceforge.net/p/jabref/bugs/</b></a>.<br>"  +
-                "<ul><li>If the bug has already been reported there, please add your comments to the existing bug.<br>" +
-                "<li>If the bug has not been reported yet, then we need the complete error message given above<br>" +
-                "and a description of what you did before the error occured.</ul>" +
-                "We also need the following information (you can copy and paste all this):</p>" +
-                "<ul><li>Java Version: " + javaVersion +
-                "<li>Java Vendor: " + javaVendor +  
-                "<li>Operating System: " + System.getProperty("os.name") + " (" + System.getProperty("os.version") + ")" +
-                "<li>Hardware Architecture: " + System.getProperty("os.arch") + "</ul>" +
-                "We are sorry for the trouble and thanks for reporting problems with JabRef!</html>");
-            pane.setEditable(false);
-            pane.setOpaque(false);
-            pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-            
-            Component componentToDisplay;
-            if (pane.getPreferredSize().getHeight() > 700){
-                JScrollPane sPane = new JScrollPane(pane, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-                sPane.setBorder(BorderFactory.createEmptyBorder());
-                sPane.setPreferredSize(new Dimension((int)pane.getPreferredSize().getWidth() + 30, 700));
-                componentToDisplay = sPane;
-            } else {
-                componentToDisplay = pane;
+        /* Build list of Import and Export formats */
+        Globals.IMPORT_FORMAT_READER.resetImportFormats();
+        CustomEntryTypesManager.loadCustomEntryTypes(preferences);
+        ExportFormats.initAllExports();
+
+        // Read list(s) of journal names and abbreviations
+        Globals.journalAbbreviationLoader = new JournalAbbreviationLoader(Globals.prefs);
+
+        // Check for running JabRef
+        RemotePreferences remotePreferences = new RemotePreferences(Globals.prefs);
+        if (remotePreferences.useRemoteServer()) {
+            Globals.REMOTE_LISTENER.open(new JabRefMessageHandler(), remotePreferences.getPort());
+
+            if (!Globals.REMOTE_LISTENER.isOpen()) {
+                // we are not alone, there is already a server out there, try to contact already running JabRef:
+                if (RemoteListenerClient.sendToActiveJabRefInstance(args, remotePreferences.getPort())) {
+                    // We have successfully sent our command line options through the socket to another JabRef instance.
+                    // So we assume it's all taken care of, and quit.
+                    LOGGER.info(Localization.lang("Arguments passed on to running JabRef instance. Shutting down."));
+                    JabRefExecutorService.INSTANCE.shutdownEverything();
+                    return;
+                }
             }
-            
-            JOptionPane.showMessageDialog(null, componentToDisplay, "An error occurred while running JabRef", JOptionPane.ERROR_MESSAGE);
-        } catch (SecurityException e) {
-            System.out.println("ERROR: You are running JabRef in a sandboxed"
-                + " environment that does not allow it to be started.");
-            e.printStackTrace();
-        } catch (NoSuchMethodException e) {
-            System.out
-                .println("This error should not happen."
-                    + " Write an email to the JabRef developers and tell them 'NoSuchMethodException in JabRefMain'");
-        } catch (ClassNotFoundException e) {
-            System.out
-                .println("This error should not happen."
-                    + " Write an email to the JabRef developers and tell them 'ClassNotFoundException in JabRefMain'");
-        } catch (IllegalArgumentException e) {
-            System.out
-                .println("This error should not happen."
-                    + " Write an email to the JabRef developers and tell them 'IllegalArgumentException in JabRefMain'");
-        } catch (IllegalAccessException e) {
-            System.out
-                .println("This error should not happen."
-                    + " Write an email to the JabRef developers and tell them 'IllegalAccessException in JabRefMain'");
-        } catch (UnsupportedClassVersionError e){
-            
-            String errorMessage = 
-                exceptionToString(e) + "\n" +
-                "This means that your Java version (" + javaVersion + ") is not high enough to run JabRef.\n" +
-                		"Please update your Java Runtime Environment to a version 1.6 or higher.\n";
-            
-            System.out.println(errorMessage);
-            
-            JEditorPane pane = new JEditorPane("text/html", 
-                "<html>You are using Java version " + javaVersion + ", but JabRef needs version 1.6 or higher." +
-                "<p>Please update your Java Runtime Environment.</p>" +
-                "<p>For more information visit <b>http://jabref.sf.net/faq.php</b>.</p></html>");
-            pane.setEditable(false);
-            pane.setOpaque(false);
-            pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-            
-            JOptionPane.showMessageDialog(null, pane, "Insufficient Java Version Installed", JOptionPane.ERROR_MESSAGE);
+            // we are alone, we start the server
+            Globals.REMOTE_LISTENER.start();
         }
+
+        // override used newline character with the one stored in the preferences
+        // The preferences return the system newline character sequence as default
+        Globals.NEWLINE = Globals.prefs.get(JabRefPreferences.NEWLINE);
+
+        // Process arguments
+        ArgumentProcessor argumentProcessor = new ArgumentProcessor(args, ArgumentProcessor.Mode.INITIAL_START);
+
+        // See if we should shut down now
+        if (argumentProcessor.shouldShutDown()) {
+            JabRefExecutorService.INSTANCE.shutdownEverything();
+            return;
+        }
+
+        // If not, start GUI
+        SwingUtilities
+                .invokeLater(() -> new JabRefGUI(argumentProcessor.getParserResults(),
+                        argumentProcessor.isBlank()));
     }
 }

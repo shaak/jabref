@@ -24,49 +24,46 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingConstants;
 
-import net.sf.jabref.*;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.IconTheme;
+import net.sf.jabref.gui.SidePaneComponent;
+import net.sf.jabref.gui.SidePaneManager;
+import net.sf.jabref.logic.l10n.Localization;
 
 public class FileUpdatePanel extends SidePaneComponent implements ActionListener,
         ChangeScanner.DisplayResultCallback {
 
     public static final String NAME = "fileUpdate";
 
-	JButton test = new JButton(Globals.lang("Review changes"));
+    private final SidePaneManager manager;
 
-	BasePanel panel;
+    private final ChangeScanner scanner;
 
-	JabRefFrame frame;
 
-	SidePaneManager manager;
-
-	JLabel message;
-
-	ChangeScanner scanner;
-
-	public FileUpdatePanel(JabRefFrame frame, BasePanel panel, SidePaneManager manager, File file,
-		ChangeScanner scanner) {
-		super(manager, GUIGlobals.getIconUrl("save"), Globals.lang("File changed"));
+    public FileUpdatePanel(BasePanel panel, SidePaneManager manager, File file, ChangeScanner scanner) {
+        super(manager, IconTheme.JabRefIcon.SAVE.getIcon(), Localization.lang("File changed"));
         close.setEnabled(false);
         this.panel = panel;
-		this.frame = frame;
-		this.manager = manager;
-		this.scanner = scanner;
+        this.manager = manager;
+        this.scanner = scanner;
 
-		JPanel main = new JPanel();
-		main.setLayout(new BorderLayout());
+        JPanel main = new JPanel();
+        main.setLayout(new BorderLayout());
 
-		message = new JLabel("<html><center>"
-			+ Globals.lang("The file<BR>'%0'<BR>has been modified<BR>externally!", file.getName())
-			+ "</center></html>", JLabel.CENTER);
+        JLabel message = new JLabel("<html><center>"
+                + Localization.lang("The file<BR>'%0'<BR>has been modified<BR>externally!", file.getName())
+                + "</center></html>", SwingConstants.CENTER);
 
-		main.add(message, BorderLayout.CENTER);
-		main.add(test, BorderLayout.SOUTH);
-		main.setBorder(BorderFactory.createEmptyBorder(1, 1, 1, 1));
+        main.add(message, BorderLayout.CENTER);
+        JButton test = new JButton(Localization.lang("Review changes"));
+        main.add(test, BorderLayout.SOUTH);
+        main.setBorder(BorderFactory.createEmptyBorder(1, 1, 1, 1));
 
-		add(main, BorderLayout.CENTER);
-		test.addActionListener(this);
-	}
+        add(main, BorderLayout.CENTER);
+        test.addActionListener(this);
+    }
 
     /**
      * We include a getter for the BasePanel this component refers to, because this
@@ -78,37 +75,45 @@ public class FileUpdatePanel extends SidePaneComponent implements ActionListener
     }
 
     /**
-	 * Unregister when this component closes. We need that to avoid showing
-	 * two such external change warnings at the same time, only the latest one.
-	 */
-	public void componentClosing() {
-	    manager.unregisterComponent(NAME);
+     * Unregister when this component closes. We need that to avoid showing
+     * two such external change warnings at the same time, only the latest one.
+     */
+    @Override
+    public void componentClosing() {
+        manager.unregisterComponent(FileUpdatePanel.NAME);
     }
 
-	/**
-	 * actionPerformed
-	 * 
-	 * @param e
-	 *            ActionEvent
-	 */
-	public void actionPerformed(ActionEvent e) {
+    @Override
+    public int getRescalingWeight() {
+        return 0;
+    }
 
-		// ChangeScanner scanner = new ChangeScanner(frame, panel); //,
-		// panel.database(), panel.metaData());
-		// try {
-		scanner.displayResult(this);
-		// scanner.changeScan(panel.file());
+    /**
+     * actionPerformed
+     *
+     * @param e
+     *            ActionEvent
+     */
+    @Override
+    public void actionPerformed(ActionEvent e) {
 
-		// } catch (IOException ex) {
-		// ex.printStackTrace();
-		// }
-	}
+        // ChangeScanner scanner = new ChangeScanner(frame, panel); //,
+        // panel.database(), panel.metaData());
+        // try {
+        scanner.displayResult(this);
+        // scanner.changeScan(panel.file());
+
+        // } catch (IOException ex) {
+        // ex.printStackTrace();
+        // }
+    }
 
     /**
      * Callback method for signalling that the change scanner has displayed the
      * scan results to the user.
      * @param resolved true if there were no changes, or if the user has resolved them.
      */
+    @Override
     public void scanResultsResolved(boolean resolved) {
         if (resolved) {
             manager.hideComponent(this);

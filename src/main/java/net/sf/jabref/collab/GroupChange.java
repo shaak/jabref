@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -18,65 +18,71 @@ package net.sf.jabref.collab;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 
-import net.sf.jabref.BasePanel;
-import net.sf.jabref.Globals;
-import net.sf.jabref.BibtexDatabase;
-import net.sf.jabref.groups.AllEntriesGroup;
-import net.sf.jabref.groups.GroupTreeNode;
-import net.sf.jabref.groups.UndoableModifySubtree;
-import net.sf.jabref.undo.NamedCompound;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.groups.GroupTreeNodeViewModel;
+import net.sf.jabref.gui.groups.UndoableModifySubtree;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.logic.groups.AllEntriesGroup;
+import net.sf.jabref.logic.groups.GroupTreeNode;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.model.database.BibDatabase;
 
-public class GroupChange extends Change {
-    private final GroupTreeNode m_changedGroups;
-    private GroupTreeNode tmpGroupRoot;
+class GroupChange extends Change {
+
+    private final GroupTreeNode changedGroups;
+    private final GroupTreeNode tmpGroupRoot;
+
 
     public GroupChange(GroupTreeNode changedGroups, GroupTreeNode tmpGroupRoot) {
-        super(changedGroups != null ? 
-                "Modified groups tree"
-                : "Removed all groups"); // JZTODO lyrics
-        m_changedGroups = changedGroups;
+        super(changedGroups == null ? Localization.lang("Removed all groups") : Localization
+                .lang("Modified groups tree"));
+        this.changedGroups = changedGroups;
         this.tmpGroupRoot = tmpGroupRoot;
     }
 
-    public boolean makeChange(BasePanel panel, BibtexDatabase secondary, NamedCompound undoEdit) {
-        final GroupTreeNode root = panel.metaData().getGroups();
+    @Override
+    public boolean makeChange(BasePanel panel, BibDatabase secondary, NamedCompound undoEdit) {
+        final GroupTreeNode root = panel.getBibDatabaseContext().getMetaData().getGroups();
         final UndoableModifySubtree undo = new UndoableModifySubtree(
-                panel.getGroupSelector(), panel.metaData().getGroups(),
-                root, Globals.lang("Modified groups")); // JZTODO lyrics
+                new GroupTreeNodeViewModel(panel.getBibDatabaseContext().getMetaData().getGroups()),
+                new GroupTreeNodeViewModel(root), Localization.lang("Modified groups"));
         root.removeAllChildren();
-        if (m_changedGroups == null) {
+        if (changedGroups == null) {
             // I think setting root to null is not possible
             root.setGroup(new AllEntriesGroup());
         } else {
             // change root group, even though it'll be AllEntries anyway
-            root.setGroup(m_changedGroups.getGroup());
-            for (int i = 0; i < m_changedGroups.getChildCount(); ++i)        
-                root.add(((GroupTreeNode) m_changedGroups.getChildAt(i)).deepCopy());
-            // the group tree is now appled to a different BibtexDatabase than it was created
-            // for, which affects groups such as ExplicitGroup (which links to BibtexEntry objects).
+            root.setGroup(changedGroups.getGroup());
+            for (GroupTreeNode child : changedGroups.getChildren()) {
+                child.copySubtree().moveTo(root);
+            }
+            // the group tree is now appled to a different BibDatabase than it was created
+            // for, which affects groups such as ExplicitGroup (which links to BibEntry objects).
             // We must traverse the tree and refresh all groups:
-            root.refreshGroupsForNewDatabase(panel.database());
+            root.refreshGroupsForNewDatabase(panel.getDatabase());
         }
 
-        if (panel.getGroupSelector().getGroupTreeRoot() == root)
-            panel.getGroupSelector().revalidateGroups();
         undoEdit.addEdit(undo);
-        
+
         // Update tmp database:
-        GroupTreeNode copied = m_changedGroups.deepCopy();
         tmpGroupRoot.removeAllChildren();
-        tmpGroupRoot.setGroup(copied.getGroup());
-        for (int i = 0; i < copied.getChildCount(); ++i)
-            tmpGroupRoot.add(((GroupTreeNode) copied.getChildAt(i)).deepCopy());
+        if (changedGroups != null) {
+            GroupTreeNode copied = changedGroups.copySubtree();
+            tmpGroupRoot.setGroup(copied.getGroup());
+            for (GroupTreeNode child : copied.getChildren()) {
+                child.copySubtree().moveTo(tmpGroupRoot);
+            }
+        }
         tmpGroupRoot.refreshGroupsForNewDatabase(secondary);
         return true;
     }
 
-    JComponent description() {
-        return new JLabel("<html>" + name + "." + (m_changedGroups != null ? " " 
-                + "Accepting the change replaces the complete " +
-                "groups tree with the externally modified groups tree." : "") 
-                + "</html>"); 
-        // JZTODO lyrics
+    @Override
+    public JComponent description() {
+        return new JLabel("<html>" + toString() + '.'
+                + (changedGroups == null ? "" : ' ' + Localization
+                        .lang("Accepting the change replaces the complete groups tree with the externally modified groups tree."))
+                + "</html>");
+
     }
 }

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -15,107 +15,123 @@
 */
 package net.sf.jabref.collab;
 
-import net.sf.jabref.BasePanel;
-import net.sf.jabref.BibtexDatabase;
-import net.sf.jabref.MetaData;
-import net.sf.jabref.Globals;
-import net.sf.jabref.undo.NamedCompound;
-
-import javax.swing.*;
-import java.util.Vector;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import javax.swing.JComponent;
+import javax.swing.JScrollPane;
+
+import net.sf.jabref.MetaData;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.model.database.BibDatabase;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
- * 
+ *
  */
-public class MetaDataChange extends Change {
+class MetaDataChange extends Change {
 
-    static final int
-        ADD = 1,
-        REMOVE = 2,
-        MODIFY = 3;
+    private static final int ADD = 1;
+    private static final int REMOVE = 2;
+    private static final int MODIFY = 3;
 
-    InfoPane tp = new InfoPane();
-    JScrollPane sp = new JScrollPane(tp);
-    private MetaData md;
-    private MetaData mdSecondary;
-    ArrayList<MetaDataChangeUnit> changes = new ArrayList<MetaDataChangeUnit>();
+    private final InfoPane tp = new InfoPane();
+    private final JScrollPane sp = new JScrollPane(tp);
+    private final MetaData md;
+    private final MetaData mdSecondary;
+    private final List<MetaDataChangeUnit> changes = new ArrayList<>();
+
+    private static final Log LOGGER = LogFactory.getLog(MetaDataChange.class);
+
 
     public MetaDataChange(MetaData md, MetaData mdSecondary) {
-        super(Globals.lang("Metadata change"));
+        super(Localization.lang("Metadata change"));
         this.md = md;
         this.mdSecondary = mdSecondary;
 
-        tp.setText("<html>"+Globals.lang("Metadata change")+"</html>");
+        tp.setText("<html>" + Localization.lang("Metadata change") + "</html>");
     }
 
     public int getChangeCount() {
         return changes.size();
     }
 
-    public void insertMetaDataAddition(String key, Vector<String> value) {
-        changes.add(new MetaDataChangeUnit(ADD, key, value));
+    public void insertMetaDataAddition(String key, List<String> value) {
+        changes.add(new MetaDataChangeUnit(MetaDataChange.ADD, key, value));
     }
 
     public void insertMetaDataRemoval(String key) {
-        changes.add(new MetaDataChangeUnit(REMOVE, key, null));
+        changes.add(new MetaDataChangeUnit(MetaDataChange.REMOVE, key, null));
     }
 
-    public void insertMetaDataChange(String key, Vector<String> value) {
-        changes.add(new MetaDataChangeUnit(MODIFY, key, value));
+    public void insertMetaDataChange(String key, List<String> value) {
+        changes.add(new MetaDataChangeUnit(MetaDataChange.MODIFY, key, value));
     }
 
-    JComponent description() {
-        StringBuilder sb = new StringBuilder("<html>"+Globals.lang("Changes have been made to the following metadata elements")+":<p>");
-        for (MetaDataChangeUnit unit : changes) {
-            sb.append("<br>&nbsp;&nbsp;");
-            sb.append(unit.key);
-            /*switch (unit.type) {
-                case ADD:
-                    sb.append("<p>Added: "+unit.key);
-                    break;
-                case REMOVE:
-                    sb.append("<p>Removed: "+unit.key);
-                    break;
-                case MODIFY:
-                    sb.append("<p>Modified: "+unit.key);
-                    break;
-            }*/
-        }
+    @Override
+    public JComponent description() {
+        StringBuilder sb = new StringBuilder(
+                "<html>" + Localization.lang("Changes have been made to the following metadata elements")
+                        + ":<p><br>&nbsp;&nbsp;");
+        sb.append(changes.stream().map(unit -> unit.key).collect(Collectors.joining("<br>&nbsp;&nbsp;")));
         sb.append("</html>");
         tp.setText(sb.toString());
         return sp;
     }
 
-    public boolean makeChange(BasePanel panel, BibtexDatabase secondary, NamedCompound undoEdit) {
+    @Override
+    public boolean makeChange(BasePanel panel, BibDatabase secondary, NamedCompound undoEdit) {
         for (MetaDataChangeUnit unit : changes) {
-            switch (unit.type) {
-                case ADD:
-                    md.putData(unit.key, unit.value);
-                    mdSecondary.putData(unit.key, unit.value);
-                    break;
-                case REMOVE:
-                    md.remove(unit.key);
-                    mdSecondary.remove(unit.key);
-                    break;
-                case MODIFY:
-                    md.putData(unit.key, unit.value);
-                    mdSecondary.putData(unit.key, unit.value);
-                    break;
+            switch (unit.getType()) {
+            case ADD:
+                md.putData(unit.getKey(), unit.getValue());
+                mdSecondary.putData(unit.getKey(), unit.getValue());
+                break;
+            case REMOVE:
+                md.remove(unit.getKey());
+                mdSecondary.remove(unit.getKey());
+                break;
+            case MODIFY:
+                md.putData(unit.getKey(), unit.getValue());
+                mdSecondary.putData(unit.getKey(), unit.getValue());
+                break;
+            default:
+                LOGGER.error("Undefined meta data change unit type");
+                break;
             }
         }
         return true;
     }
 
-    class MetaDataChangeUnit {
-        int type;
-        String key;
-        Vector<String> value;
 
-        public MetaDataChangeUnit(int type, String key, Vector<String> value) {
+    static class MetaDataChangeUnit {
+
+        private final int type;
+        private final String key;
+        private final List<String> value;
+
+
+        public MetaDataChangeUnit(int type, String key, List<String> value) {
             this.type = type;
             this.key = key;
             this.value = value;
+        }
+
+        public int getType() {
+            return type;
+        }
+
+        public String getKey() {
+            return key;
+        }
+
+        public List<String> getValue() {
+            return value;
         }
     }
 }

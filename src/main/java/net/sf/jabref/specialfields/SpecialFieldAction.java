@@ -1,4 +1,4 @@
-/*  Copyright (C) 2012 JabRef contributors.
+/*  Copyright (C) 2012-2016 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -15,68 +15,74 @@
 */
 package net.sf.jabref.specialfields;
 
-import net.sf.jabref.BaseAction;
-import net.sf.jabref.BibtexEntry;
-import net.sf.jabref.Globals;
-import net.sf.jabref.JabRefFrame;
-import net.sf.jabref.undo.NamedCompound;
+import java.util.List;
 
-public class SpecialFieldAction extends BaseAction {
-	private JabRefFrame frame;
-	private String doneTextPattern;
-	private SpecialField c;
-	String value;
-	private boolean nullFieldIfValueIsTheSame;
-	private String undoText;
-	
-	/**
-	 * 
-	 * @param nullFieldIfValueIsTheSame - false also causes that doneTextPattern has two place holders %0 for the value and %1 for the sum of entries
-	 * @param doneTextPattern - the pattern to use to update status information shown in MainFrame
-	 */
-	public SpecialFieldAction(
-			JabRefFrame frame,
-			SpecialField c,
-			String value,
-			boolean nullFieldIfValueIsTheSame,
-			String undoText,
-			String doneTextPattern
-			) {
-		this.frame = frame;
-		this.c = c;
-		this.value = value;
-		this.nullFieldIfValueIsTheSame = nullFieldIfValueIsTheSame;
-		this.undoText = undoText;		
-		this.doneTextPattern = doneTextPattern;
-	}
-	
+import net.sf.jabref.gui.JabRefFrame;
+import net.sf.jabref.gui.actions.BaseAction;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.model.entry.BibEntry;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+public class SpecialFieldAction implements BaseAction {
+
+    private final JabRefFrame frame;
+    private final SpecialField specialField;
+    private final String value;
+    private final boolean nullFieldIfValueIsTheSame;
+    private final String undoText;
+
+    private static final Log LOGGER = LogFactory.getLog(SpecialFieldAction.class);
+
+
+    /**
+     *
+     * @param nullFieldIfValueIsTheSame - false also causes that doneTextPattern has two place holders %0 for the value and %1 for the sum of entries
+     */
+    public SpecialFieldAction(
+            JabRefFrame frame,
+            SpecialField specialField,
+            String value,
+            boolean nullFieldIfValueIsTheSame,
+            String undoText) {
+        this.frame = frame;
+        this.specialField = specialField;
+        this.value = value;
+        this.nullFieldIfValueIsTheSame = nullFieldIfValueIsTheSame;
+        this.undoText = undoText;
+    }
+
+    @Override
     public void action() {
         try {
-      	  NamedCompound ce = new NamedCompound(undoText);
-      	  BibtexEntry[] bes = frame.basePanel().getSelectedEntries();
-      	  if (bes == null)
-      		  return;
-      	  for (BibtexEntry be: bes) {
-      		  // if (value==null) and then call nullField has been ommited as updatefield also handles value==null
-      		  SpecialFieldsUtils.updateField(c, value, be, ce, nullFieldIfValueIsTheSame);
-      	  }
-      	  ce.end();
-      	  if (ce.hasEdits()) {
-	      	  frame.basePanel().undoManager.addEdit(ce);
-	      	  frame.basePanel().markBaseChanged();
-	      	  frame.basePanel().updateEntryEditorIfShowing();
-	      	  String outText;
-	      	  if (nullFieldIfValueIsTheSame)
-	      		  outText = Globals.lang(doneTextPattern, Integer.toString(bes.length));
-	      	  else
-	      		  outText = Globals.lang(doneTextPattern, value, Integer.toString(bes.length));
-	      	  frame.output(outText);
-      	  } else {
-      		  // if user does not change anything with his action, we do not do anything either
-      		  // even no output message
-      	  }
-        } catch (Throwable ex) { 
-      	  ex.printStackTrace(); 
+            List<BibEntry> bes = frame.getCurrentBasePanel().getSelectedEntries();
+            if ((bes == null) || bes.isEmpty()) {
+                return;
+            }
+            NamedCompound ce = new NamedCompound(undoText);
+            for (BibEntry be : bes) {
+                // if (value==null) and then call nullField has been omitted as updatefield also handles value==null
+                SpecialFieldsUtils.updateField(specialField, value, be, ce, nullFieldIfValueIsTheSame);
+            }
+            ce.end();
+            if (ce.hasEdits()) {
+                frame.getCurrentBasePanel().getUndoManager().addEdit(ce);
+                frame.getCurrentBasePanel().markBaseChanged();
+                frame.getCurrentBasePanel().updateEntryEditorIfShowing();
+                String outText;
+                if (nullFieldIfValueIsTheSame || value==null) {
+                    outText = specialField.getTextDone(Integer.toString(bes.size()));
+                } else {
+                    outText = specialField.getTextDone(value, Integer.toString(bes.size()));
+                }
+                frame.output(outText);
+            } else {
+                // if user does not change anything with his action, we do not do anything either
+                // even no output message
+            }
+        } catch (Throwable ex) {
+            LOGGER.error("Problem setting special fields", ex);
         }
     }
 

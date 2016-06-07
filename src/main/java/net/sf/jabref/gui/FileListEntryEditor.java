@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -16,28 +16,54 @@
 package net.sf.jabref.gui;
 
 import java.awt.BorderLayout;
-import java.awt.event.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
-import javax.swing.*;
+import javax.swing.AbstractAction;
+import javax.swing.ActionMap;
+import javax.swing.BorderFactory;
+import javax.swing.DefaultComboBoxModel;
+import javax.swing.InputMap;
+import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JProgressBar;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
-import net.sf.jabref.GUIGlobals;
+import net.sf.jabref.BibDatabaseContext;
 import net.sf.jabref.Globals;
-import net.sf.jabref.JabRefFrame;
-import net.sf.jabref.MetaData;
-import net.sf.jabref.Util;
+import net.sf.jabref.JabRefPreferences;
 import net.sf.jabref.external.ConfirmCloseFileListEntryEditor;
 import net.sf.jabref.external.ExternalFileType;
+import net.sf.jabref.external.ExternalFileTypes;
 import net.sf.jabref.external.UnknownExternalFileType;
+import net.sf.jabref.gui.desktop.JabRefDesktop;
+import net.sf.jabref.gui.keyboard.KeyBinding;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.logic.util.io.FileUtil;
 
 import com.jgoodies.forms.builder.ButtonBarBuilder;
-import com.jgoodies.forms.builder.DefaultFormBuilder;
+import com.jgoodies.forms.builder.FormBuilder;
 import com.jgoodies.forms.layout.FormLayout;
-
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
  * This class produces a dialog box for editing a single file link from a Bibtex entry.
@@ -50,141 +76,141 @@ import com.jgoodies.forms.layout.FormLayout;
  */
 public class FileListEntryEditor {
 
-    JDialog diag;
-    JTextField link = new JTextField(), description = new JTextField();
-    JButton ok = new JButton(Globals.lang("Ok")),
-            cancel = new JButton(Globals.lang("Cancel")),
-            open = new JButton(Globals.lang("Open"));
+    private static final Log LOGGER = LogFactory.getLog(FileListEntryEditor.class);
 
+    private JDialog diag;
+    private final JTextField link = new JTextField();
+    private final JTextField description = new JTextField();
+    private final JButton ok = new JButton(Localization.lang("OK"));
 
-    JComboBox<ExternalFileType> types;
-    JProgressBar prog = new JProgressBar(JProgressBar.HORIZONTAL);
-    JLabel downloadLabel = new JLabel(Globals.lang("Downloading..."));
-    ConfirmCloseFileListEntryEditor externalConfirm = null;
+    private final JComboBox<ExternalFileType> types;
+    private final JProgressBar prog = new JProgressBar(SwingConstants.HORIZONTAL);
+    private final JLabel downloadLabel = new JLabel(Localization.lang("Downloading..."));
+    private ConfirmCloseFileListEntryEditor externalConfirm;
 
     private FileListEntry entry;
-    private MetaData metaData;
-    private boolean okPressed = false, okDisabledExternally = false,
-            openBrowseWhenShown = false, dontOpenBrowseUntilDisposed = false;
+    private final BibDatabaseContext databaseContext;
+    private boolean okPressed;
+    private boolean okDisabledExternally;
+    private boolean openBrowseWhenShown;
+    private boolean dontOpenBrowseUntilDisposed;
 
-    public static Pattern remoteLinkPattern = Pattern.compile("[a-z]+://.*");
+    private static final Pattern REMOTE_LINK_PATTERN = Pattern.compile("[a-z]+://.*");
+
 
     public FileListEntryEditor(JabRefFrame frame, FileListEntry entry, boolean showProgressBar,
-                               boolean showOpenButton, MetaData metaData) {
+            boolean showOpenButton, BibDatabaseContext databaseContext) {
         this.entry = entry;
-        this.metaData = metaData;
+        this.databaseContext = databaseContext;
 
-        AbstractAction okAction = new AbstractAction() {
-            public void actionPerformed(ActionEvent e) {
-                // If OK button is disabled, ignore this event:
-                if (!ok.isEnabled())
-                    return;
-                // If necessary, ask the external confirm object whether we are ready to close.
-                if (externalConfirm != null) {
-                    // Construct an updated FileListEntry:
-                    FileListEntry testEntry = new FileListEntry("", "", null);
-                    storeSettings(testEntry);
-                    if (!externalConfirm.confirmClose(testEntry))
-                        return;
-                }
-                diag.dispose();
-                storeSettings(FileListEntryEditor.this.entry);
-                okPressed = true;
+        ActionListener okAction = e -> {
+            // If OK button is disabled, ignore this event:
+            if (!ok.isEnabled()) {
+                return;
             }
+            // If necessary, ask the external confirm object whether we are ready to close.
+            if (externalConfirm != null) {
+                // Construct an updated FileListEntry:
+                storeSettings(entry);
+                if (!externalConfirm.confirmClose(entry)) {
+                    return;
+                }
+            }
+            diag.dispose();
+            storeSettings(FileListEntryEditor.this.entry);
+            okPressed = true;
         };
-        types = new JComboBox<ExternalFileType>();
-        types.addItemListener(new ItemListener() {
-            public void itemStateChanged(ItemEvent itemEvent) {
-                if (!okDisabledExternally)
-                    ok.setEnabled(types.getSelectedItem() != null);
+        types = new JComboBox<>();
+        types.addItemListener(itemEvent -> {
+            if (!okDisabledExternally) {
+                ok.setEnabled(types.getSelectedItem() != null);
             }
         });
-        
-        DefaultFormBuilder builder = new DefaultFormBuilder(new FormLayout
-                ("left:pref, 4dlu, fill:150dlu, 4dlu, fill:pref, 4dlu, fill:pref", ""));
-        builder.append(Globals.lang("Link"));
-        builder.append(link);
+
+        FormBuilder builder = FormBuilder.create().layout(new FormLayout
+                ("left:pref, 4dlu, fill:150dlu, 4dlu, fill:pref, 4dlu, fill:pref", "p, 2dlu, p, 2dlu, p"));
+        builder.add(Localization.lang("Link")).xy(1, 1);
+        builder.add(link).xy(3, 1);
         final BrowseListener browse = new BrowseListener(frame, link);
-        final JButton browseBut = new JButton(Globals.lang("Browse"));
+        final JButton browseBut = new JButton(Localization.lang("Browse"));
         browseBut.addActionListener(browse);
-        builder.append(browseBut);
-        if (showOpenButton)
-            builder.append(open);
-        builder.nextLine();
-        builder.append(Globals.lang("Description"));
-        builder.append(description, 3);
-        builder.getPanel().setBorder(BorderFactory.createEmptyBorder(5,5,5,5));
-        builder.nextLine();
-        builder.append(Globals.lang("File type"));
-        builder.append(types, 3);
-        if (showProgressBar) {
-            builder.nextLine();
-            builder.append(downloadLabel);
-            builder.append(prog, 3);
+        builder.add(browseBut).xy(5, 1);
+        JButton open = new JButton(Localization.lang("Open"));
+        if (showOpenButton) {
+            builder.add(open).xy(7, 1);
         }
-        
+        builder.add(Localization.lang("Description")).xy(1, 3);
+        builder.add(description).xyw(3,3,3);
+        builder.getPanel().setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        builder.add(Localization.lang("File type")).xy(1, 5);
+        builder.add(types).xyw(3, 5, 3);
+        if (showProgressBar) {
+            builder.appendRows("2dlu, p");
+            builder.add(downloadLabel).xy(1,7);
+            builder.add(prog).xyw(3,7,3);
+        }
+
         ButtonBarBuilder bb = new ButtonBarBuilder();
         bb.addGlue();
-        //bb.addButton(open);
-        //bb.addRelatedGap();
         bb.addRelatedGap();
         bb.addButton(ok);
+        JButton cancel = new JButton(Localization.lang("Cancel"));
         bb.addButton(cancel);
         bb.addGlue();
-
+        bb.getPanel().setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
         ok.addActionListener(okAction);
         // Add OK action to the two text fields to simplify entering:
         link.addActionListener(okAction);
         description.addActionListener(okAction);
 
-        open.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent actionEvent) {
-                openFile();
-            }
-        });
+        open.addActionListener(e -> openFile());
 
         AbstractAction cancelAction = new AbstractAction() {
-                public void actionPerformed(ActionEvent e) {
-                    diag.dispose();
-                }
-            };
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                diag.dispose();
+            }
+        };
         cancel.addActionListener(cancelAction);
-
 
         // Key bindings:
         ActionMap am = builder.getPanel().getActionMap();
         InputMap im = builder.getPanel().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-        im.put(Globals.prefs.getKey("Close dialog"), "close");
+        im.put(Globals.getKeyPrefs().getKey(KeyBinding.CLOSE_DIALOG), "close");
         am.put("close", cancelAction);
 
         link.getDocument().addDocumentListener(new DocumentListener() {
+
+            @Override
             public void insertUpdate(DocumentEvent documentEvent) {
                 checkExtension();
             }
+
+            @Override
             public void removeUpdate(DocumentEvent documentEvent) {
+                // Do nothing
             }
+
+            @Override
             public void changedUpdate(DocumentEvent documentEvent) {
                 checkExtension();
             }
 
         });
 
-
-        diag = new JDialog(frame, Globals.lang("Edit file link"), true);
+        diag = new JDialog(frame, Localization.lang("Save file"), true);
         diag.getContentPane().add(builder.getPanel(), BorderLayout.CENTER);
         diag.getContentPane().add(bb.getPanel(), BorderLayout.SOUTH);
         diag.pack();
-        Util.placeDialog(diag, frame);
+        diag.setLocationRelativeTo(frame);
         diag.addWindowListener(new WindowAdapter() {
+
+            @Override
             public void windowActivated(WindowEvent event) {
                 if (openBrowseWhenShown && !dontOpenBrowseUntilDisposed) {
                     dontOpenBrowseUntilDisposed = true;
-                    SwingUtilities.invokeLater(new Runnable() {
-                        public void run() {
-                            browse.actionPerformed(new ActionEvent(browseBut, 0, ""));
-                        }
-                    });
+                    SwingUtilities.invokeLater(() -> browse.actionPerformed(new ActionEvent(browseBut, 0, "")));
                 }
             }
 
@@ -197,34 +223,32 @@ public class FileListEntryEditor {
     }
 
     private void checkExtension() {
-        if ((types.getSelectedIndex() == -1) &&
-                (link.getText().trim().length() > 0)) {
+        if ((types.getSelectedIndex() == -1) && (!link.getText().trim().isEmpty())) {
 
             // Check if this looks like a remote link:
-            if (remoteLinkPattern.matcher(link.getText()).matches()) {
-                ExternalFileType type = Globals.prefs.getExternalFileTypeByExt("html");
-                if (type != null) {
-                    types.setSelectedItem(type);
+            if (FileListEntryEditor.REMOTE_LINK_PATTERN.matcher(link.getText()).matches()) {
+                Optional<ExternalFileType> type = ExternalFileTypes.getInstance().getExternalFileTypeByExt("html");
+                if (type.isPresent()) {
+                    types.setSelectedItem(type.get());
                     return;
                 }
             }
 
             // Try to guess the file type:
             String theLink = link.getText().trim();
-            ExternalFileType type = Globals.prefs.getExternalFileTypeForName(theLink);
-            if (type != null)
-                types.setSelectedItem(type);
+            ExternalFileTypes.getInstance().getExternalFileTypeForName(theLink).ifPresent(types::setSelectedItem);
         }
     }
 
-    public void openFile() {
-        ExternalFileType type = (ExternalFileType)types.getSelectedItem();
-        if (type != null)
+    private void openFile() {
+        ExternalFileType type = (ExternalFileType) types.getSelectedItem();
+        if (type != null) {
             try {
-                Util.openExternalFileAnyFormat(metaData, link.getText(), type);
+                JabRefDesktop.openExternalFileAnyFormat(databaseContext, link.getText(), Optional.of(type));
             } catch (IOException e) {
-                e.printStackTrace();
+                LOGGER.error("File could not be opened", e);
             }
+        }
     }
 
     public void setExternalConfirm(ConfirmCloseFileListEntryEditor eC) {
@@ -250,103 +274,112 @@ public class FileListEntryEditor {
     }
 
     public void setVisible(boolean visible, boolean openBrowse) {
-        openBrowseWhenShown = openBrowse && Globals.prefs.getBoolean("allowFileAutoOpenBrowse");
-        if (visible)
+        openBrowseWhenShown = openBrowse && Globals.prefs.getBoolean(JabRefPreferences.ALLOW_FILE_AUTO_OPEN_BROWSE);
+        if (visible) {
             okPressed = false;
+        }
         diag.setVisible(visible);
     }
 
     public boolean isVisible() {
-        return diag != null && diag.isVisible();
+        return (diag != null) && diag.isVisible();
     }
 
-    public void setValues(FileListEntry entry) {
-        description.setText(entry.getDescription());
-        link.setText(entry.getLink());
+    private void setValues(FileListEntry entry) {
+        description.setText(entry.description);
+        link.setText(entry.link);
         //if (link.getText().length() > 0)
         //    checkExtension();
-        types.setModel(new DefaultComboBoxModel<ExternalFileType>(Globals.prefs.getExternalFileTypeSelection()));
+        Collection<ExternalFileType> list = ExternalFileTypes.getInstance().getExternalFileTypeSelection();
+
+        types.setModel(new DefaultComboBoxModel<>(list.toArray(new ExternalFileType[list.size()])));
         types.setSelectedIndex(-1);
         // See what is a reasonable selection for the type combobox:
-        if ((entry.getType() != null) && !(entry.getType() instanceof UnknownExternalFileType))
-            types.setSelectedItem(entry.getType());
-        // If the entry has a link but not a file type, try to deduce the file type:
-        else if ((entry.getLink() != null) && (entry.getLink().length() > 0)) {
-            checkExtension();    
+        if ((entry.type.isPresent()) && !(entry.type.get() instanceof UnknownExternalFileType)) {
+            types.setSelectedItem(entry.type.get());
+        } else if ((entry.link != null) && (!entry.link.isEmpty())) {
+            checkExtension();
         }
-
     }
 
-    public void storeSettings(FileListEntry entry) {
-        entry.setDescription(description.getText().trim());
-	// See if we should trim the file link to be relative to the file directory:
-	try {
-        String[] dirs = metaData.getFileDirectory(GUIGlobals.FILE_FIELD);
-        if (dirs.length == 0) {
-            entry.setLink(link.getText().trim());
-        } else {
-            boolean found = false;
-            for (String dir : dirs) {
-                String canPath = (new File(dir)).getCanonicalPath();
-                File fl = new File(link.getText().trim());
-                if (fl.isAbsolute()) {
-                    String flPath = fl.getCanonicalPath();
-                    if ((flPath.length() > canPath.length()) && (flPath.startsWith(canPath))) {
-                        String relFileName = fl.getCanonicalPath().substring(canPath.length() + 1);
-                        entry.setLink(relFileName);
-                        found = true;
-                        break;
+    private void storeSettings(FileListEntry entry) {
+        String descriptionText = this.description.getText().trim();
+        String link = "";
+        // See if we should trim the file link to be relative to the file directory:
+        try {
+            List<String> dirs = databaseContext.getFileDirectory();
+            if (dirs.isEmpty()) {
+                link = this.link.getText().trim();
+            } else {
+                boolean found = false;
+                for (String dir : dirs) {
+                    String canPath = (new File(dir)).getCanonicalPath();
+                    File fl = new File(this.link.getText().trim());
+                    if (fl.isAbsolute()) {
+                        String flPath = fl.getCanonicalPath();
+                        if ((flPath.length() > canPath.length()) && (flPath.startsWith(canPath))) {
+                            link = fl.getCanonicalPath().substring(canPath.length() + 1);
+                            found = true;
+                            break;
+                        }
                     }
                 }
+                if (!found) {
+                    link = this.link.getText().trim();
+                }
             }
-            if (!found)
-                entry.setLink(link.getText().trim());
+        } catch (IOException ex) {
+            // Don't think this should happen, but set the file link directly as a fallback:
+            link = this.link.getText().trim();
         }
-    } catch (java.io.IOException ex)
-	{ 
-		ex.printStackTrace();
-		// Don't think this should happen, but set the file link directly as a fallback:
-		entry.setLink(link.getText().trim());
-	}
-	
-        entry.setType((ExternalFileType)types.getSelectedItem());
+
+        ExternalFileType type = (ExternalFileType) types.getSelectedItem();
+
+        entry.description = descriptionText;
+        entry.type = Optional.ofNullable(type);
+        entry.link = link;
     }
 
     public boolean okPressed() {
         return okPressed;
     }
 
+
     class BrowseListener implements ActionListener {
-        private JFrame parent;
-        private JTextField comp;
+        private final JFrame parent;
+        private final JTextField comp;
 
         public BrowseListener(JFrame parent, JTextField comp) {
             this.parent = parent;
             this.comp = comp;
         }
 
+        @Override
         public void actionPerformed(ActionEvent e) {
-            File initial = new File(comp.getText().trim());
-            if (comp.getText().trim().length() == 0) {
-                // Nothing in the field. Go to the last file dir used:
-                initial = new File(Globals.prefs.get("fileWorkingDirectory"));
+            String filePath = comp.getText().trim();
+            Optional<File> file = FileUtil.expandFilename(databaseContext, filePath);
+            File workingDir;
+            // no file set yet or found
+            if (file.isPresent()) {
+                workingDir = new File(file.get().getParent());
+            } else {
+                workingDir = new File(Globals.prefs.get(JabRefPreferences.FILE_WORKING_DIRECTORY));
             }
-            String chosen = FileDialogs.getNewFile(parent, initial, Globals.NONE,
-                JFileChooser.OPEN_DIALOG, false);
-            if (chosen != null) {
-                File newFile = new File(chosen);
+            String selection = FileDialogs.getNewFile(parent, workingDir, Collections.emptyList(),
+                    JFileChooser.OPEN_DIALOG, false);
+            if (selection != null) {
+                File newFile = new File(selection);
                 // Store the directory for next time:
-                Globals.prefs.put("fileWorkingDirectory", newFile.getParent());
+                Globals.prefs.put(JabRefPreferences.FILE_WORKING_DIRECTORY, newFile.getParent());
 
                 // If the file is below the file directory, make the path relative:
-                String[] dirsS = metaData.getFileDirectory(GUIGlobals.FILE_FIELD);
-                newFile = Util.shortenFileName(newFile, dirsS);
+                List<String> fileDirs = databaseContext.getFileDirectory();
+                newFile = FileUtil.shortenFileName(newFile, fileDirs);
 
                 comp.setText(newFile.getPath());
                 comp.requestFocus();
             }
         }
     }
-
 
 }

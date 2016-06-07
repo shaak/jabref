@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -18,34 +18,42 @@ package net.sf.jabref.collab;
 import javax.swing.JComponent;
 import javax.swing.JScrollPane;
 
-import net.sf.jabref.*;
-import net.sf.jabref.undo.NamedCompound;
-import net.sf.jabref.undo.UndoableInsertEntry;
+import net.sf.jabref.Globals;
+import net.sf.jabref.JabRefPreferences;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.PreviewPanel;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.gui.undo.UndoableInsertEntry;
+import net.sf.jabref.logic.l10n.Localization;
+import net.sf.jabref.model.database.BibDatabase;
+import net.sf.jabref.model.entry.BibEntry;
+import net.sf.jabref.model.entry.IdGenerator;
 
-public class EntryAddChange extends Change {
+class EntryAddChange extends Change {
 
-  BibtexEntry diskEntry;
-//  boolean isModifiedLocally, modificationsAgree;[[[[[[
-  PreviewPanel pp;
-  JScrollPane sp;
+    private final BibEntry diskEntry;
+    private final JScrollPane sp;
 
-  public EntryAddChange(BibtexEntry diskEntry) {
-    super("Added entry");
-    this.diskEntry = diskEntry;
 
-    pp = new PreviewPanel(null, diskEntry, null, new MetaData(), Globals.prefs.get("preview0"));
-    sp = new JScrollPane(pp);
-  }
+    public EntryAddChange(BibEntry diskEntry) {
+        super(Localization.lang("Added entry"));
+        this.diskEntry = diskEntry;
 
-  public boolean makeChange(BasePanel panel, BibtexDatabase secondary, NamedCompound undoEdit) {
-      diskEntry.setId(Util.createNeutralId());
-      panel.database().insertEntry(diskEntry);
-      secondary.insertEntry(diskEntry);
-      undoEdit.addEdit(new UndoableInsertEntry(panel.database(), diskEntry, panel));
-      return true;
-  }
+        PreviewPanel pp = new PreviewPanel(null, diskEntry, null, Globals.prefs.get(JabRefPreferences.PREVIEW_0));
+        sp = new JScrollPane(pp);
+    }
 
-  JComponent description() {
-    return sp;
-  }
+    @Override
+    public boolean makeChange(BasePanel panel, BibDatabase secondary, NamedCompound undoEdit) {
+        diskEntry.setId(IdGenerator.next());
+        panel.getDatabase().insertEntry(diskEntry);
+        secondary.insertEntry(diskEntry);
+        undoEdit.addEdit(new UndoableInsertEntry(panel.getDatabase(), diskEntry, panel));
+        return true;
+    }
+
+    @Override
+    public JComponent description() {
+        return sp;
+    }
 }

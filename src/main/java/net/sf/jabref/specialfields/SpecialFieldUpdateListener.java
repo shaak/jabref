@@ -15,67 +15,56 @@
 */
 package net.sf.jabref.specialfields;
 
-import java.beans.PropertyChangeEvent;
-import java.beans.PropertyVetoException;
-import java.beans.VetoableChangeListener;
-
 import javax.swing.SwingUtilities;
 
-import net.sf.jabref.BibtexEntry;
-import net.sf.jabref.JabRef;
+import net.sf.jabref.JabRefGUI;
+import net.sf.jabref.event.FieldChangedEvent;
+import net.sf.jabref.gui.undo.NamedCompound;
+import net.sf.jabref.model.entry.BibEntry;
+
+import com.google.common.eventbus.Subscribe;
 
 /**
- * Listener triggering 
+ * Listener triggering
  *  * an update of keywords if special field has been updated
- *  * an update of special fields if keywords have been updated 
+ *  * an update of special fields if keywords have been updated
  */
-public class SpecialFieldUpdateListener implements VetoableChangeListener {
-	
-	private static SpecialFieldUpdateListener INSTANCE = null;
-	
-	public void vetoableChange(PropertyChangeEvent e)
-			throws PropertyVetoException {
-		final BibtexEntry entry = (BibtexEntry) e.getSource();
-		final String fieldName = e.getPropertyName();
-		// Source editor cycles through all entries
-		// if we immediately updated the fields, the entry editor would detect a subsequent change as a user change 
-		// and re-fire this event
-		// e.g., "keyword = {prio1}, priority = {prio2}" and a change at keyword to prio3 would not succeed. 
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-				if (fieldName.equals("keywords")) {
-					// we do NOT pass a named component indicating that we do not want to have undo capabilities
-					// if the user undoes the change in the keyword field, this method is also called and 
-					// the special fields are updated accordingly 
-					SpecialFieldsUtils.syncSpecialFieldsFromKeywords(entry, null);
-		            SwingUtilities.invokeLater(new Runnable() {
-		                public void run() {
-					    	JabRef.jrf.basePanel().updateEntryEditorIfShowing();
-		                }
-		            });
-				} else {
-					SpecialField field = SpecialFieldsUtils.getSpecialFieldInstanceFromFieldName(fieldName);
-					if (field != null) {
-						// we do NOT pass a named component indicating that we do not want to have undo capabilities
-						// if the user undoes the change in the sepcial field, this method is also called and 
-						// the keyword field is updated accordingly 
-						SpecialFieldsUtils.syncKeywordsFromSpecialFields(entry, null);
-			            SwingUtilities.invokeLater(new Runnable() {
-			                public void run() {
-						    	JabRef.jrf.basePanel().updateEntryEditorIfShowing();
-			                }
-			            });
-					}
-				}
-			}
-		});
-	}
-	
-	public static SpecialFieldUpdateListener getInstance() {
-		if (INSTANCE == null) {
-			INSTANCE = new SpecialFieldUpdateListener();
-		}
-        return INSTANCE;
-	}
+public class SpecialFieldUpdateListener {
+
+    private static SpecialFieldUpdateListener INSTANCE;
+
+    @Subscribe
+    public void listen(FieldChangedEvent fieldChangedEvent) {
+        final BibEntry entry = fieldChangedEvent.getBibEntry();
+        final String fieldName = fieldChangedEvent.getFieldName();
+        // Source editor cycles through all entries
+        // if we immediately updated the fields, the entry editor would detect a subsequent change as a user change
+        // and re-fire this event
+        // e.g., "keyword = {prio1}, priority = {prio2}" and a change at keyword to prio3 would not succeed.
+        SwingUtilities.invokeLater(() -> {
+            NamedCompound compound = new NamedCompound("SpecialFieldSync");
+            if ("keywords".equals(fieldName)) {
+                SpecialFieldsUtils.syncSpecialFieldsFromKeywords(entry, compound);
+                SwingUtilities
+                        .invokeLater(() -> JabRefGUI.getMainFrame().getCurrentBasePanel().updateEntryEditorIfShowing());
+            } else {
+                if (SpecialFieldsUtils.isSpecialField(fieldName)) {
+                    SpecialFieldsUtils.syncKeywordsFromSpecialFields(entry, compound);
+                    SwingUtilities.invokeLater(
+                            () -> JabRefGUI.getMainFrame().getCurrentBasePanel().updateEntryEditorIfShowing());
+                }
+            }
+            // we do NOT pass the named component to the undo manager since we do not want to have undo capabilities
+            // if the user undoes the change in the keyword field, this method is also called and
+            // the special fields are updated accordingly
+        });
+    }
+
+    public static SpecialFieldUpdateListener getInstance() {
+        if (SpecialFieldUpdateListener.INSTANCE == null) {
+            SpecialFieldUpdateListener.INSTANCE = new SpecialFieldUpdateListener();
+        }
+        return SpecialFieldUpdateListener.INSTANCE;
+    }
 
 }

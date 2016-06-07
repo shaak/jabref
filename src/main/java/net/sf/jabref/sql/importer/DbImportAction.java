@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2015 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -18,192 +18,182 @@ package net.sf.jabref.sql.importer;
 import java.awt.event.ActionEvent;
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.ArrayList;
+import java.sql.Statement;
+import java.util.List;
 import java.util.Vector;
 
 import javax.swing.AbstractAction;
+import javax.swing.Action;
 import javax.swing.JOptionPane;
 
-import net.sf.jabref.AbstractWorker;
-import net.sf.jabref.BasePanel;
-import net.sf.jabref.BibtexDatabase;
-import net.sf.jabref.GUIGlobals;
+import net.sf.jabref.BibDatabaseContext;
 import net.sf.jabref.Globals;
-import net.sf.jabref.JabRefFrame;
-import net.sf.jabref.MetaData;
-import net.sf.jabref.MnemonicAwareAction;
-import net.sf.jabref.Util;
+import net.sf.jabref.gui.BasePanel;
+import net.sf.jabref.gui.JabRefFrame;
+import net.sf.jabref.gui.actions.MnemonicAwareAction;
+import net.sf.jabref.gui.worker.AbstractWorker;
+import net.sf.jabref.logic.l10n.Localization;
 import net.sf.jabref.sql.DBConnectDialog;
 import net.sf.jabref.sql.DBExporterAndImporterFactory;
 import net.sf.jabref.sql.DBImportExportDialog;
 import net.sf.jabref.sql.DBStrings;
+import net.sf.jabref.sql.DatabaseUtil;
 import net.sf.jabref.sql.SQLUtil;
+import net.sf.jabref.util.Util;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
- * Created by IntelliJ IDEA. User: alver Date: Mar 27, 2008 Time: 6:09:08 PM To
- * change this template use File | Settings | File Templates.
- * 
- * Jan. 20th Changed to accomodate the new way to connect to DB and also to show
- * the exceptions and to display more than one DB imported (by ifsteinm)
- * 
+ * Created by IntelliJ IDEA. User: alver Date: Mar 27, 2008 Time: 6:09:08 PM To change this template use File | Settings
+ * | File Templates.
+ * <p>
+ * Jan. 20th Changed to accommodate the new way to connect to DB and also to show the exceptions and to display more than
+ * one DB imported (by ifsteinm)
  */
 public class DbImportAction extends AbstractWorker {
 
-	BibtexDatabase database = null;
-	MetaData metaData = null;
-	String errorMessage = null;
-	boolean connectToDB = false;
-	private JabRefFrame frame;
-	private DBStrings dbs = null;
-	ArrayList<Object[]> databases = null;
+    private static final Log LOGGER = LogFactory.getLog(DbImportAction.class);
 
-	public DbImportAction(JabRefFrame frame) {
-		this.frame = frame;
-	}
+    private BibDatabaseContext databaseContext;
+    private boolean connectedToDB;
+    private final JabRefFrame frame;
+    private DBStrings dbs;
+    private List<DBImporterResult> databases;
 
-	public AbstractAction getAction() {
-		return new DbImpAction();
-	}
+    public DbImportAction(JabRefFrame frame) {
+        this.frame = frame;
+    }
 
-	class DbImpAction extends MnemonicAwareAction {
-		public DbImpAction() {
-			super(GUIGlobals.getImage("dbImport"));
-			putValue(NAME, "Import from external SQL database");
+    public AbstractAction getAction() {
+        return new DbImpAction();
+    }
 
-		}
+    class DbImpAction extends MnemonicAwareAction {
+        public DbImpAction() {
+            putValue(Action.NAME, Localization.menuTitle("Import from external SQL database"));
+        }
 
-		public void actionPerformed(ActionEvent e) {
-			try {
-				Util.runAbstractWorker(DbImportAction.this);
-			} catch (Throwable throwable) {
-				throwable.printStackTrace();
-			}
-		}
-	}
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            try {
+                Util.runAbstractWorker(DbImportAction.this);
+            } catch (Throwable throwable) {
+                LOGGER.warn("Problem importing from database", throwable);
+            }
+        }
+    }
 
-	// run first, in EDT:
-	public void init() {
+    @Override
+    public void init() {
 
-		dbs = new DBStrings();
-		dbs.initialize();
-		DBConnectDialog dbd = new DBConnectDialog(frame, dbs);
-		dbs = dbd.getDBStrings();
-		// panel.metaData().getDBStrings();
+        dbs = new DBStrings();
+        dbs.initialize();
+        DBConnectDialog dbd = new DBConnectDialog(frame, dbs);
+        dbs = dbd.getDBStrings();
+        // panel.metaData().getDBStrings();
 
-		// get DBStrings from user if necessary
-		if (!dbs.isConfigValid()) {
+        // get DBStrings from user if necessary
+        if (dbs.isConfigValid()) {
+            connectedToDB = true;
+        } else {
+            // init DB strings if necessary
+            if (!dbs.isInitialized()) {
+                dbs.initialize();
+            }
 
-			// init DB strings if necessary
-			if (!dbs.isInitialized()) {
-				dbs.initialize();
-			}
+            // show connection dialog
+            dbd = new DBConnectDialog(frame, dbs);
+            dbd.setLocationRelativeTo(frame);
+            dbd.setVisible(true);
 
-			// show connection dialog
-			dbd = new DBConnectDialog(frame, dbs);
-			Util.placeDialog(dbd, frame);
-			dbd.setVisible(true);
+            connectedToDB = dbd.isConnectedToDB();
 
-			connectToDB = dbd.getConnectToDB();
+            // store database strings
+            if (connectedToDB) {
+                dbs = dbd.getDBStrings();
+                dbd.dispose();
+            }
+        }
 
-			// store database strings
-			if (connectToDB) {
-				dbs = dbd.getDBStrings();
-				dbd.dispose();
-			}
+    }
 
-		} else {
+    @Override
+    public void run() {
+        performImport();
+    }
 
-			connectToDB = true;
+    private void performImport() {
+        if (!connectedToDB) {
+            return;
+        }
 
-		}
+        frame.output(Localization.lang("Attempting SQL import..."));
+        DBExporterAndImporterFactory factory = new DBExporterAndImporterFactory();
+        DatabaseImporter importer = factory.getImporter(dbs.getDbPreferences().getServerType());
+        try {
+            try (Connection conn = importer.connectToDB(dbs);
+                 Statement statement = conn.createStatement();
+                 ResultSet rs = statement.executeQuery(SQLUtil.queryAllFromTable("jabref_database"))) {
 
-	}
+                Vector<Vector<String>> matrix = new Vector<>();
 
-	// run second, on a different thread:
-	public void run() {
-		performImport();
-	}
+                while (rs.next()) {
+                    Vector<String> v = new Vector<>();
+                    v.add(rs.getString("database_name"));
+                    matrix.add(v);
+                }
 
-	private void performImport() {
-		if (connectToDB) {
-			try {
-				frame.output(Globals.lang("Attempting SQL import..."));
-				DBExporterAndImporterFactory factory = new DBExporterAndImporterFactory();
-				DBImporter importer = factory.getImporter(dbs.getServerType());
-				Connection conn = importer.connectToDB(dbs);
-				ResultSet rs = SQLUtil.queryAllFromTable(conn,
-						"jabref_database");
-				Vector<String> v;
-				Vector<Vector<String>> matrix = new Vector<Vector<String>>();
+                if (matrix.isEmpty()) {
+                    JOptionPane.showMessageDialog(frame,
+                            Localization.lang("There are no available databases to be imported"),
+                            Localization.lang("Import from SQL database"), JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    DBImportExportDialog dialogo = new DBImportExportDialog(frame, matrix, DBImportExportDialog.DialogType.IMPORTER);
+                    if (dialogo.removeAction) {
+                        String dbName = dialogo.selectedDB;
+                        DatabaseUtil.removeDB(dialogo, dbName, conn, databaseContext);
+                        performImport();
+                    } else if (dialogo.moreThanOne) {
+                        // use default DB mode for import
+                        databases = importer.performImport(dbs, dialogo.listOfDBs, Globals.prefs.getDefaultBibDatabaseMode());
+                        for (DBImporterResult res : databases) {
+                            databaseContext = res.getDatabaseContext();
+                            dbs.isConfigValid(true);
+                        }
+                        frame.output(Localization.lang("%0 databases will be imported",
+                                Integer.toString(databases.size())));
+                    } else {
+                        frame.output(Localization.lang("Importing canceled"));
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            String preamble = Localization.lang("Could not import from SQL database for the following reason:");
+            String errorMessage = SQLUtil.getExceptionMessage(ex);
+            dbs.isConfigValid(false);
+            JOptionPane.showMessageDialog(frame, preamble + '\n' + errorMessage,
+                    Localization.lang("Import from SQL database"), JOptionPane.ERROR_MESSAGE);
+            frame.output(Localization.lang("Error importing from database"));
+            LOGGER.error("Error importing from database", ex);
+        }
+    }
 
-				while (rs.next()) {
-					v = new Vector<String>();
-					v.add(rs.getString("database_name"));
-					matrix.add(v);
-				}
-
-				if (matrix.size() > 0) {
-					DBImportExportDialog dialogo = new DBImportExportDialog(
-							frame, matrix,
-							DBImportExportDialog.DialogType.IMPORTER);
-
-					if (dialogo.removeAction) {
-						String dbName = dialogo.selectedDB;
-						importer.removeDB(dialogo, dbName, conn, metaData);
-						performImport();
-					} else {
-						if (dialogo.moreThanOne) {
-							databases = importer.performImport(null, dbs,
-									dialogo.listOfDBs);
-							for (Object[] res : databases) {
-								database = (BibtexDatabase) res[0];
-								metaData = (MetaData) res[1];
-								dbs.isConfigValid(true);
-							}
-							frame.output(Globals.lang(
-									"%0 databases will be imported",
-									Integer.toString(databases.size())));
-						} else {
-							frame.output(Globals.lang("Importing cancelled"));
-						}
-					}
-				} else {
-					JOptionPane.showMessageDialog(frame, Globals.lang("There are no available databases to be imported"),
-							Globals.lang("Import from SQL database"),
-							JOptionPane.INFORMATION_MESSAGE);					
-				}
-
-			} catch (Exception ex) {
-				String preamble = "Could not import from SQL database for the following reason:";
-				errorMessage = SQLUtil.getExceptionMessage(ex);
-				dbs.isConfigValid(false);
-				JOptionPane.showMessageDialog(frame, Globals.lang(preamble)
-						+ "\n" + errorMessage,
-						Globals.lang("Import from SQL database"),
-						JOptionPane.ERROR_MESSAGE);
-				frame.output(Globals.lang("Error importing from database"));
-				ex.printStackTrace();
-			}
-		}
-	}
-
-	// run third, on EDT:
-	public void update() {
-		if (databases == null)
-			return;
-		for (Object[] res : databases) {
-			database = (BibtexDatabase) res[0];
-			metaData = (MetaData) res[1];
-			if (database != null) {
-				BasePanel pan = frame.addTab(database, null, metaData,
-						Globals.prefs.get("defaultEncoding"), true);
-				pan.metaData().setDBStrings(dbs);
-				frame.setTabTitle(pan, res[2] + "(Imported)", "Imported DB");
-				pan.markBaseChanged();
-			}
-		}
-		frame.output(Globals.lang("Imported %0 databases successfully",
-				Integer.toString(databases.size())));
-	}
+    @Override
+    public void update() {
+        if (databases == null) {
+            return;
+        }
+        for (DBImporterResult res : databases) {
+            databaseContext = res.getDatabaseContext();
+            if (databaseContext != null) {
+                BasePanel pan = frame.addTab(databaseContext, true);
+                pan.getBibDatabaseContext().getMetaData().setDBStrings(dbs);
+                frame.setTabTitle(pan, res.getName() + "(Imported)", "Imported DB");
+                pan.markBaseChanged();
+            }
+        }
+        frame.output(Localization.lang("Imported %0 databases successfully", Integer.toString(databases.size())));
+    }
 
 }

@@ -1,4 +1,4 @@
-/*  Copyright (C) 2003-2011 JabRef contributors.
+/*  Copyright (C) 2003-2016 JabRef contributors.
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
@@ -15,48 +15,46 @@
 */
 package net.sf.jabref.gui;
 
+import java.util.Objects;
+import java.util.Optional;
+
 import net.sf.jabref.external.ExternalFileType;
 
 /**
  * This class represents a file link for a Bibtex entry.
-*/
+ */
 public class FileListEntry {
-    private String link;
-    private String description;
-    private ExternalFileType type;
+
+    public String description;
+    public String link;
+    public Optional<ExternalFileType> type;
+
+    public FileListEntry(String description, String link) {
+        this(description, link, Optional.empty());
+    }
 
     public FileListEntry(String description, String link, ExternalFileType type) {
-        this.link = link;
-        this.description = description;
-        this.type = type;
+        this.description = Objects.requireNonNull(description);
+        this.link = Objects.requireNonNull(link);
+        this.type = Optional.of(Objects.requireNonNull(type));
     }
 
-    public String getDescription() {
-        return description;
+    public FileListEntry(String description, String link, Optional<ExternalFileType> type) {
+        this.description = Objects.requireNonNull(description);
+        this.link = Objects.requireNonNull(link);
+        this.type = Objects.requireNonNull(type);
     }
 
-    public void setDescription(String description) {
-        this.description = description;
+    public String[] getStringArrayRepresentation() {
+        return new String[] {description, link, getTypeName()};
     }
 
-    public String getLink() {
-        return link;
+    private String getTypeName() {
+        return this.type.isPresent() ? this.type.get().getName() : "";
     }
 
-    public void setLink(String link) {
-        this.link = link;
-    }
-
-    public ExternalFileType getType() {
-        return type;
-    }
-
-    public void setType(ExternalFileType type) {
-        this.type = type;
-    }
-
+    @Override
     public String toString() {
-        return description+" : "+link+" : "+type;
+        return description + " : " + link + " : " + type.orElse(null);
     }
-
 }
